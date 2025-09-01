@@ -39,8 +39,8 @@ This library uses automated code generation to stay synchronized with the offici
 
 ### Generated Files
 
-- `acp/types_generated.go`: Go types generated from the upstream JSON schema
-- `acp/constants_generated.go`: Method constants generated from meta.json
+- `acp/api/types_generated.go`: Go types generated from the upstream JSON schema
+- `acp/api/constants_generated.go`: Method constants generated from meta.json
 
 ### Generation Process
 
@@ -51,13 +51,16 @@ This library uses automated code generation to stay synchronized with the offici
 ### Make Targets
 
 ```bash
-make setup       # Install required tools and dependencies
+make setup        # Install required tools and dependencies
 make fetch-schema # Download latest schema files from upstream
-make generate    # Generate types and constants (includes fetch-schema)
-make build       # Build all packages
-make test        # Run tests
-make examples    # Build example binaries
-make clean       # Clean generated files and binaries
+make generate     # Generate types and constants (includes fetch-schema)
+make build        # Build all packages
+make test         # Run tests
+make fmt          # Format code
+make vet          # Run static analysis
+make lint         # Run linters
+make check        # Run test + fmt + vet + lint
+make examples     # Build example binaries
 ```
 
 ## Code Quality
@@ -65,19 +68,23 @@ make clean       # Clean generated files and binaries
 All code must pass the following quality checks:
 
 ```bash
-go build ./...   # Build all packages
-go test ./...    # Run all tests  
-go fmt ./...     # Format code
-go vet ./...     # Static analysis
+make check       # Run test + fmt + vet + lint
 ```
 
-These checks are automatically run as part of the development workflow.
+Or individually:
+```bash
+go build ./...    # Build all packages
+go test ./...     # Run all tests  
+go fmt ./...      # Format code
+go vet ./...      # Static analysis
+golangci-lint run # Linting
+```
 
 ## Project Structure
 
 ```
 agent-client-protocol-go/
-├── Makefile              # Build automation
+├── Makefile             # Build automation
 ├── go.mod               # Go module definition
 ├── README.md            # User documentation
 ├── CONTRIBUTING.md      # This file
@@ -86,15 +93,20 @@ agent-client-protocol-go/
 │   ├── schema.json      # From upstream ACP
 │   └── meta.json        # From upstream ACP  
 ├── acp/                 # Core library package
-│   ├── types_generated.go      # Generated types
-│   ├── constants_generated.go  # Generated constants
+│   ├── api/             # Generated API types and constants
+│   │   ├── types_generated.go      # Generated types
+│   │   └── constants_generated.go  # Generated constants
 │   ├── agent.go         # Agent connection implementation
 │   ├── client.go        # Client connection implementation
 │   ├── handlers.go      # Handler registration system
 │   └── errors.go        # Error types and constants
 ├── examples/            # Usage examples
-│   ├── agent/main.go    # Example agent implementation
-│   └── client/main.go   # Example client implementation
+│   ├── README.md        # Detailed examples documentation
+│   ├── agent/           # Example agent implementation
+│   │   └── main.go      # Agent with session management and tool calls
+│   └── client/          # Example client implementation
+│       ├── main.go      # Interactive client with subprocess management
+│       └── session_handler.go # Session update handling
 └── cmd/generate/        # Code generation CLI tool
     ├── main.go          # CLI entry point
     └── cmd/
