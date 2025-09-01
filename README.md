@@ -31,6 +31,7 @@ import (
     "os"
     
     "github.com/joshgarnett/agent-client-protocol-go/acp"
+    "github.com/joshgarnett/agent-client-protocol-go/acp/api"
 )
 
 func main() {
@@ -40,6 +41,7 @@ func main() {
     registry := acp.NewHandlerRegistry()
     registry.RegisterInitializeHandler(handleInitialize)
     registry.RegisterSessionNewHandler(handleSessionNew)
+    registry.RegisterSessionPromptHandler(handleSessionPrompt)
     
     // Create stdio connection
     stdio := &stdioReadWriteCloser{Reader: os.Stdin, Writer: os.Stdout}
@@ -49,9 +51,10 @@ func main() {
     conn.Wait()
 }
 
-func handleInitialize(ctx context.Context, params *acp.InitializeRequest) (*acp.InitializeResponse, error) {
-    return &acp.InitializeResponse{
-        AgentCapabilities: acp.AgentCapabilities{
+func handleInitialize(ctx context.Context, params *api.InitializeRequest) (*api.InitializeResponse, error) {
+    return &api.InitializeResponse{
+        ProtocolVersion: api.ACPProtocolVersion,
+        AgentCapabilities: api.AgentCapabilities{
             LoadSession: true,
         },
     }, nil
@@ -69,6 +72,7 @@ import (
     "os"
     
     "github.com/joshgarnett/agent-client-protocol-go/acp"
+    "github.com/joshgarnett/agent-client-protocol-go/acp/api"
 )
 
 func main() {
@@ -77,6 +81,7 @@ func main() {
     // Create handler registry
     registry := acp.NewHandlerRegistry()
     registry.RegisterFsReadTextFileHandler(handleFileRead)
+    registry.RegisterSessionUpdateHandler(handleSessionUpdate)
     
     // Create stdio connection
     stdio := &stdioReadWriteCloser{Reader: os.Stdin, Writer: os.Stdout}
@@ -86,9 +91,9 @@ func main() {
     conn.Wait()
 }
 
-func handleFileRead(ctx context.Context, params *acp.ReadTextFileRequest) (*acp.ReadTextFileResponse, error) {
+func handleFileRead(ctx context.Context, params *api.ReadTextFileRequest) (*api.ReadTextFileResponse, error) {
     // Handle file read request from agent
-    return &acp.ReadTextFileResponse{}, nil
+    return &api.ReadTextFileResponse{}, nil
 }
 ```
 
@@ -113,13 +118,13 @@ The `HandlerRegistry` provides type-safe registration of method and notification
 registry := acp.NewHandlerRegistry()
 
 // Register method handlers (request/response)
-registry.RegisterInitializeHandler(func(ctx context.Context, params *acp.InitializeRequest) (*acp.InitializeResponse, error) {
+registry.RegisterInitializeHandler(func(ctx context.Context, params *api.InitializeRequest) (*api.InitializeResponse, error) {
     // Handle initialize request
     return response, nil
 })
 
 // Register notification handlers (fire-and-forget)
-registry.RegisterSessionCancelHandler(func(ctx context.Context, params *acp.SessionCancelParams) error {
+registry.RegisterSessionCancelHandler(func(ctx context.Context, params *api.CancelNotification) error {
     // Handle session cancel notification
     return nil
 })
@@ -159,8 +164,26 @@ This implementation supports Agent Client Protocol version 1 with the following 
 ## Examples
 
 See the `examples/` directory for complete working examples:
-- `examples/agent/`: Example agent implementation
-- `examples/client/`: Example client implementation
+- `examples/agent/`: Example agent implementation with session management, tool calls, and permission handling
+- `examples/client/`: Example client implementation with subprocess management and interactive communication
+
+### Running the Examples
+
+```bash
+# Build the examples
+go build -o examples/agent/agent ./examples/agent
+go build -o examples/client/client ./examples/client
+
+# Run interactive client (spawns agent automatically)
+go run ./examples/client ./examples/agent/agent
+
+# Or using built binaries
+./examples/client/client ./examples/agent/agent
+```
+
+The client will start an interactive session where you can chat with the agent, see tool calls in action, and approve permissions for file operations.
+
+For detailed documentation, protocol flows, and advanced usage patterns, see [examples/README.md](examples/README.md).
 
 ## Contributing
 
