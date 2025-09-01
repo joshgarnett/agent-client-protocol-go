@@ -16,7 +16,13 @@ fetch-schema:
 # Generate Go types from schema
 generate: fetch-schema
 	@echo "Generating Go types from schema..."
-	@$(shell go env GOPATH)/bin/go-jsonschema -p acp --only-models --tags json,yaml schema/schema.json > acp/types_generated.go
+	@$(shell go env GOPATH)/bin/go-jsonschema -p api --only-models --tags json,yaml schema/schema.json > acp/api/types_generated.go
+	@echo "Filtering conflicting types..."
+	@go run cmd/generate/main.go filter
+	@echo "Generating enums from schema..."
+	@go run cmd/generate/main.go enums
+	@echo "Generating unions from schema..."
+	@go run cmd/generate/main.go unions
 	@echo "Generating constants from meta.json..."
 	@go run cmd/generate/main.go constants
 	@go fmt ./...
@@ -44,5 +50,5 @@ check: test fmt vet lint
 
 # Build examples
 examples: build
-	go build -o bin/example-agent examples/agent/
-	go build -o bin/example-client examples/client/
+	go build -o bin/example-agent ./examples/agent
+	go build -o bin/example-client ./examples/client

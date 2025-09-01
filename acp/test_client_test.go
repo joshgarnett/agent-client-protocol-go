@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -16,10 +17,10 @@ type TestClient struct {
 	fileContentsMu sync.RWMutex
 	writtenFilesMu sync.RWMutex
 
-	permissionResponses []RequestPermissionResponse
+	permissionResponses []api.RequestPermissionResponse
 	permissionMu        sync.Mutex
 
-	sessionNotifications []SessionNotification
+	sessionNotifications []api.SessionNotification
 	sessionMu            sync.RWMutex
 
 	terminals   map[string]*TestTerminal
@@ -47,8 +48,8 @@ func NewTestClient() *TestClient {
 	return &TestClient{
 		fileContents:         make(map[string]string),
 		writtenFiles:         make([]FileWrite, 0),
-		permissionResponses:  make([]RequestPermissionResponse, 0),
-		sessionNotifications: make([]SessionNotification, 0),
+		permissionResponses:  make([]api.RequestPermissionResponse, 0),
+		sessionNotifications: make([]api.SessionNotification, 0),
 		terminals:            make(map[string]*TestTerminal),
 		shouldError:          make(map[string]bool),
 	}
@@ -71,17 +72,17 @@ func (c *TestClient) GetWrittenFiles() []FileWrite {
 }
 
 // QueuePermissionResponse queues a permission response.
-func (c *TestClient) QueuePermissionResponse(response RequestPermissionResponse) {
+func (c *TestClient) QueuePermissionResponse(response api.RequestPermissionResponse) {
 	c.permissionMu.Lock()
 	defer c.permissionMu.Unlock()
 	c.permissionResponses = append(c.permissionResponses, response)
 }
 
 // GetSessionNotifications returns all received session notifications.
-func (c *TestClient) GetSessionNotifications() []SessionNotification {
+func (c *TestClient) GetSessionNotifications() []api.SessionNotification {
 	c.sessionMu.RLock()
 	defer c.sessionMu.RUnlock()
-	result := make([]SessionNotification, len(c.sessionNotifications))
+	result := make([]api.SessionNotification, len(c.sessionNotifications))
 	copy(result, c.sessionNotifications)
 	return result
 }
@@ -103,10 +104,10 @@ func (c *TestClient) checkShouldError(method string) bool {
 
 func (c *TestClient) HandleFsReadTextFile(
 	_ context.Context,
-	params *ReadTextFileRequest,
-) (*ReadTextFileResponse, error) {
+	params *api.ReadTextFileRequest,
+) (*api.ReadTextFileResponse, error) {
 	if c.checkShouldError("fs/read_text_file") {
-		return nil, &jsonrpc2.Error{Code: int64(ErrorCodeNotFound), Message: "File not found"}
+		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeNotFound), Message: "File not found"}
 	}
 
 	c.fileContentsMu.RLock()
@@ -117,14 +118,14 @@ func (c *TestClient) HandleFsReadTextFile(
 		content = "default content"
 	}
 
-	return &ReadTextFileResponse{
+	return &api.ReadTextFileResponse{
 		Content: content,
 	}, nil
 }
 
-func (c *TestClient) HandleFsWriteTextFile(_ context.Context, params *WriteTextFileRequest) error {
+func (c *TestClient) HandleFsWriteTextFile(_ context.Context, params *api.WriteTextFileRequest) error {
 	if c.checkShouldError("fs/write_text_file") {
-		return &jsonrpc2.Error{Code: int64(ErrorCodeForbidden), Message: "Write not allowed"}
+		return &jsonrpc2.Error{Code: int64(api.ErrorCodeForbidden), Message: "Write not allowed"}
 	}
 
 	c.writtenFilesMu.Lock()
@@ -139,10 +140,10 @@ func (c *TestClient) HandleFsWriteTextFile(_ context.Context, params *WriteTextF
 
 func (c *TestClient) HandleRequestPermission(
 	_ context.Context,
-	_ *RequestPermissionRequest,
-) (*RequestPermissionResponse, error) {
+	_ *api.RequestPermissionRequest,
+) (*api.RequestPermissionResponse, error) {
 	if c.checkShouldError("session/request_permission") {
-		return nil, &jsonrpc2.Error{Code: int64(ErrorCodeUnauthorized), Message: "Permission denied"}
+		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeUnauthorized), Message: "Permission denied"}
 	}
 
 	c.permissionMu.Lock()
@@ -150,7 +151,7 @@ func (c *TestClient) HandleRequestPermission(
 
 	if len(c.permissionResponses) == 0 {
 		// Default response - cancelled (indicating no specific selection made).
-		return &RequestPermissionResponse{
+		return &api.RequestPermissionResponse{
 			Outcome: map[string]interface{}{
 				"outcome": "cancelled",
 			},
@@ -163,9 +164,9 @@ func (c *TestClient) HandleRequestPermission(
 	return &response, nil
 }
 
-func (c *TestClient) HandleSessionUpdate(_ context.Context, params *SessionNotification) error {
+func (c *TestClient) HandleSessionUpdate(_ context.Context, params *api.SessionNotification) error {
 	if c.checkShouldError("session/update") {
-		return &ACPError{Code: ErrorCodeInternalServerError, Message: "Update failed"}
+		return &api.ACPError{Code: api.ErrorCodeInternalServerError, Message: "Update failed"}
 	}
 
 	c.sessionMu.Lock()
@@ -177,10 +178,10 @@ func (c *TestClient) HandleSessionUpdate(_ context.Context, params *SessionNotif
 
 func (c *TestClient) HandleTerminalCreate(
 	_ context.Context,
-	_ *CreateTerminalRequest,
-) (*CreateTerminalResponse, error) {
+	_ *api.CreateTerminalRequest,
+) (*api.CreateTerminalResponse, error) {
 	if c.checkShouldError("terminal/create") {
-		return nil, &ACPError{Code: ErrorCodeInternalServerError, Message: "Terminal creation failed"}
+		return nil, &api.ACPError{Code: api.ErrorCodeInternalServerError, Message: "Terminal creation failed"}
 	}
 
 	terminalID := atomic.AddInt64(&c.terminalIDs, 1)
@@ -194,23 +195,23 @@ func (c *TestClient) HandleTerminalCreate(
 		Outputs:  make([]string, 0),
 	}
 
-	return &CreateTerminalResponse{
+	return &api.CreateTerminalResponse{
 		TerminalId: terminalIDStr,
 	}, nil
 }
 
-func (c *TestClient) HandleTerminalOutput(_ context.Context, _ *TerminalOutputRequest) error {
+func (c *TestClient) HandleTerminalOutput(_ context.Context, _ *api.TerminalOutputRequest) error {
 	if c.checkShouldError("terminal/output") {
-		return &ACPError{Code: ErrorCodeNotFound, Message: "Terminal not found"}
+		return &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Terminal not found"}
 	}
 
 	// For testing, we just log the output.
 	return nil
 }
 
-func (c *TestClient) HandleTerminalRelease(_ context.Context, params *ReleaseTerminalRequest) error {
+func (c *TestClient) HandleTerminalRelease(_ context.Context, params *api.ReleaseTerminalRequest) error {
 	if c.checkShouldError("terminal/release") {
-		return &ACPError{Code: ErrorCodeNotFound, Message: "Terminal not found"}
+		return &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Terminal not found"}
 	}
 
 	// Remove terminal.
@@ -223,10 +224,10 @@ func (c *TestClient) HandleTerminalRelease(_ context.Context, params *ReleaseTer
 
 func (c *TestClient) HandleTerminalWaitForExit(
 	_ context.Context,
-	params *WaitForTerminalExitRequest,
-) (*WaitForTerminalExitResponse, error) {
+	params *api.WaitForTerminalExitRequest,
+) (*api.WaitForTerminalExitResponse, error) {
 	if c.checkShouldError("terminal/wait_for_exit") {
-		return nil, &ACPError{Code: ErrorCodeNotFound, Message: "Terminal not found"}
+		return nil, &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Terminal not found"}
 	}
 
 	c.terminalsMu.RLock()
@@ -234,7 +235,7 @@ func (c *TestClient) HandleTerminalWaitForExit(
 	c.terminalsMu.RUnlock()
 
 	if !exists {
-		return nil, &ACPError{Code: ErrorCodeNotFound, Message: "Terminal not found"}
+		return nil, &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Terminal not found"}
 	}
 
 	exitCode := 0
@@ -242,18 +243,18 @@ func (c *TestClient) HandleTerminalWaitForExit(
 		exitCode = *terminal.ExitCode
 	}
 
-	return &WaitForTerminalExitResponse{
+	return &api.WaitForTerminalExitResponse{
 		ExitCode: &exitCode,
 	}, nil
 }
 
-func NewPermissionCancelledOutcome() RequestPermissionResponseOutcome {
+func NewPermissionCancelledOutcome() api.RequestPermissionResponseOutcome {
 	return map[string]interface{}{
 		"outcome": "cancelled",
 	}
 }
 
-func NewPermissionSelectedOutcome(optionID string) RequestPermissionResponseOutcome {
+func NewPermissionSelectedOutcome(optionID string) api.RequestPermissionResponseOutcome {
 	return map[string]interface{}{
 		"outcome":  "selected",
 		"optionId": optionID,
@@ -267,20 +268,20 @@ const (
 	StopReasonRefusal         = "refusal"
 )
 
-func NewPromptResponseEndTurn() *PromptResponse {
-	return &PromptResponse{
+func NewPromptResponseEndTurn() *api.PromptResponse {
+	return &api.PromptResponse{
 		StopReason: StopReasonEndTurn,
 	}
 }
 
-func NewPromptResponseMaxTokens() *PromptResponse {
-	return &PromptResponse{
+func NewPromptResponseMaxTokens() *api.PromptResponse {
+	return &api.PromptResponse{
 		StopReason: StopReasonMaxTokens,
 	}
 }
 
-func NewPromptResponseRefusal() *PromptResponse {
-	return &PromptResponse{
+func NewPromptResponseRefusal() *api.PromptResponse {
+	return &api.PromptResponse{
 		StopReason: StopReasonRefusal,
 	}
 }

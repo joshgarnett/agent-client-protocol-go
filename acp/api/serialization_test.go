@@ -1,4 +1,4 @@
-package acp
+package api
 
 import (
 	"encoding/json"
@@ -301,6 +301,10 @@ func (s *SerializationTestSuite) TestRoundTripConsistency() {
 
 func intPtr(i int) *int {
 	return &i
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
 
 func TestSerializationTestSuite(t *testing.T) {

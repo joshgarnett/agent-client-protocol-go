@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+
 	"github.com/stretchr/testify/suite"
 )
 
@@ -32,7 +34,7 @@ func (s *ConcurrencyTestSuite) TestConcurrentInitialization() {
 
 	const numGoroutines = 10
 	var wg sync.WaitGroup
-	results := make(chan *InitializeResponse, numGoroutines)
+	results := make(chan *api.InitializeResponse, numGoroutines)
 	errors := make(chan error, numGoroutines)
 
 	// Launch multiple initialization attempts concurrently.
@@ -82,7 +84,7 @@ func (s *ConcurrencyTestSuite) TestConcurrentSessionOperations() {
 
 	const numSessions = 50
 	var wg sync.WaitGroup
-	sessionIDs := make(chan SessionId, numSessions)
+	sessionIDs := make(chan api.SessionId, numSessions)
 	errors := make(chan error, numSessions)
 
 	// Create multiple sessions concurrently.
@@ -109,7 +111,7 @@ func (s *ConcurrencyTestSuite) TestConcurrentSessionOperations() {
 	close(errors)
 
 	// Verify all sessions were created.
-	receivedIDs := make([]SessionId, 0)
+	receivedIDs := make([]api.SessionId, 0)
 	for id := range sessionIDs {
 		receivedIDs = append(receivedIDs, id)
 	}
@@ -124,7 +126,7 @@ func (s *ConcurrencyTestSuite) TestConcurrentSessionOperations() {
 	s.Equal(0, errorCount)
 
 	// Verify all session IDs are unique.
-	idMap := make(map[SessionId]bool)
+	idMap := make(map[api.SessionId]bool)
 	for _, id := range receivedIDs {
 		s.False(idMap[id], "Duplicate session ID: %s", id)
 		idMap[id] = true
@@ -153,7 +155,7 @@ func (s *ConcurrencyTestSuite) TestConcurrentFileOperations() {
 
 	var wg sync.WaitGroup
 	const numConcurrentReads = 100
-	readResults := make(chan *ReadTextFileResponse, numConcurrentReads)
+	readResults := make(chan *api.ReadTextFileResponse, numConcurrentReads)
 	readErrors := make(chan error, numConcurrentReads)
 
 	// Perform concurrent file reads.
@@ -302,7 +304,7 @@ func (s *ConcurrencyTestSuite) TestConcurrentNotifications() {
 		go func() {
 			defer wg.Done()
 
-			cancelRequest := &CancelNotification{
+			cancelRequest := &api.CancelNotification{
 				SessionId: sessionResponse.SessionId,
 			}
 			err := s.pair.AgentConn.SessionCancel(ctx, cancelRequest)
@@ -367,7 +369,7 @@ func (s *ConcurrencyTestSuite) TestConcurrentErrorHandling() {
 	errorCount := 0
 	for err := range errorResults {
 		s.Require().Error(err)
-		AssertACPError(s.T(), err, ErrorCodeNotFound)
+		AssertACPError(s.T(), err, api.ErrorCodeNotFound)
 		errorCount++
 	}
 
@@ -428,7 +430,7 @@ func (s *ConcurrencyTestSuite) TestConcurrentConnectionManagement() {
 
 // Helper methods.
 
-func (s *ConcurrencyTestSuite) initializeConnection(ctx context.Context) *InitializeResponse {
+func (s *ConcurrencyTestSuite) initializeConnection(ctx context.Context) *api.InitializeResponse {
 	request := SampleInitializeRequest()
 	response, err := s.pair.AgentConn.Initialize(ctx, request)
 	s.Require().NoError(err)
@@ -436,7 +438,7 @@ func (s *ConcurrencyTestSuite) initializeConnection(ctx context.Context) *Initia
 	return response
 }
 
-func (s *ConcurrencyTestSuite) createSession(ctx context.Context) *NewSessionResponse {
+func (s *ConcurrencyTestSuite) createSession(ctx context.Context) *api.NewSessionResponse {
 	request := SampleNewSessionRequest()
 	response, err := s.pair.AgentConn.SessionNew(ctx, request)
 	s.Require().NoError(err)

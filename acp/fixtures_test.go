@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/require"
 )
@@ -43,8 +45,8 @@ func NewConnectionPair(t *testing.T) *ConnectionPair {
 	agentHandler.RegisterSessionNewHandler(testAgent.HandleSessionNew)
 	agentHandler.RegisterSessionLoadHandler(testAgent.HandleSessionLoad)
 	agentHandler.RegisterSessionPromptHandler(testAgent.HandleSessionPrompt)
-	agentHandler.RegisterNotification(MethodSessionCancel, func(ctx context.Context, params json.RawMessage) error {
-		var cancelParams CancelNotification
+	agentHandler.RegisterNotification(api.MethodSessionCancel, func(ctx context.Context, params json.RawMessage) error {
+		var cancelParams api.CancelNotification
 		if err := json.Unmarshal(params, &cancelParams); err != nil {
 			return err
 		}
@@ -108,11 +110,11 @@ func WaitWithTimeout(t *testing.T, timeout time.Duration, condition func() bool,
 // Common test data.
 
 // SampleInitializeRequest creates a sample initialize request.
-func SampleInitializeRequest() *InitializeRequest {
-	return &InitializeRequest{
-		ProtocolVersion: ProtocolVersion(ACPProtocolVersion),
-		ClientCapabilities: ClientCapabilities{
-			Fs: FileSystemCapability{
+func SampleInitializeRequest() *api.InitializeRequest {
+	return &api.InitializeRequest{
+		ProtocolVersion: api.ProtocolVersion(api.ACPProtocolVersion),
+		ClientCapabilities: api.ClientCapabilities{
+			Fs: api.FileSystemCapability{
 				ReadTextFile:  true,
 				WriteTextFile: true,
 			},
@@ -121,27 +123,34 @@ func SampleInitializeRequest() *InitializeRequest {
 }
 
 // SampleNewSessionRequest creates a sample new session request.
-func SampleNewSessionRequest() *NewSessionRequest {
-	return &NewSessionRequest{
+func SampleNewSessionRequest() *api.NewSessionRequest {
+	return &api.NewSessionRequest{
 		Cwd: "/test/project",
-		// McpServers field might not exist in current schema.
+		McpServers: []api.McpServer{
+			{
+				Name:    "filesystem",
+				Command: "/usr/local/bin/mcp-server-filesystem",
+				Args:    []string{"--stdio"},
+				Env:     []api.EnvVariable{},
+			},
+		},
 	}
 }
 
 // SamplePromptRequest creates a sample prompt request.
-func SamplePromptRequest(sessionID string) *PromptRequest {
-	return &PromptRequest{
-		SessionId: SessionId(sessionID),
-		Prompt:    []PromptRequestPromptElem{
+func SamplePromptRequest(sessionID string) *api.PromptRequest {
+	return &api.PromptRequest{
+		SessionId: api.SessionId(sessionID),
+		Prompt:    []api.PromptRequestPromptElem{
 			// Add sample prompt elements based on generated types.
 		},
 	}
 }
 
 // SampleReadTextFileRequest creates a sample read file request.
-func SampleReadTextFileRequest(sessionID, path string) *ReadTextFileRequest {
-	return &ReadTextFileRequest{
-		SessionId: SessionId(sessionID),
+func SampleReadTextFileRequest(sessionID, path string) *api.ReadTextFileRequest {
+	return &api.ReadTextFileRequest{
+		SessionId: api.SessionId(sessionID),
 		Path:      path,
 		Line:      nil,
 		Limit:     nil,
@@ -149,9 +158,9 @@ func SampleReadTextFileRequest(sessionID, path string) *ReadTextFileRequest {
 }
 
 // SampleWriteTextFileRequest creates a sample write file request.
-func SampleWriteTextFileRequest(sessionID, path, content string) *WriteTextFileRequest {
-	return &WriteTextFileRequest{
-		SessionId: SessionId(sessionID),
+func SampleWriteTextFileRequest(sessionID, path, content string) *api.WriteTextFileRequest {
+	return &api.WriteTextFileRequest{
+		SessionId: api.SessionId(sessionID),
 		Path:      path,
 		Content:   content,
 	}
@@ -175,7 +184,7 @@ func AssertACPError(t *testing.T, err error, expectedCode int) {
 	require.Error(t, err)
 
 	// Check if it's a direct ACPError.
-	var acpErr *ACPError
+	var acpErr *api.ACPError
 	if errors.As(err, &acpErr) {
 		require.Equal(t, expectedCode, acpErr.Code)
 		return

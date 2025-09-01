@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+
 	"github.com/stretchr/testify/suite"
 )
 
@@ -36,7 +38,7 @@ func (s *ErrorHandlingTestSuite) TestInitializationErrors() {
 
 	s.Require().Error(err)
 	s.Nil(result)
-	AssertACPError(s.T(), err, ErrorCodeInitializationError)
+	AssertACPError(s.T(), err, api.ErrorCodeInitializationError)
 }
 
 func (s *ErrorHandlingTestSuite) TestAuthenticationErrors() {
@@ -47,13 +49,13 @@ func (s *ErrorHandlingTestSuite) TestAuthenticationErrors() {
 
 	s.pair.TestAgent.SetShouldError("authenticate", true)
 
-	authRequest := &AuthenticateRequest{
-		MethodId: AuthMethodId("invalid-method"),
+	authRequest := &api.AuthenticateRequest{
+		MethodId: api.AuthMethodId("invalid-method"),
 	}
 	err := s.pair.AgentConn.Authenticate(ctx, authRequest)
 
 	s.Require().Error(err)
-	AssertACPError(s.T(), err, ErrorCodeUnauthorized)
+	AssertACPError(s.T(), err, api.ErrorCodeUnauthorized)
 }
 
 func (s *ErrorHandlingTestSuite) TestSessionErrors() {
@@ -69,7 +71,7 @@ func (s *ErrorHandlingTestSuite) TestSessionErrors() {
 
 	s.Require().Error(err)
 	s.Nil(result)
-	AssertACPError(s.T(), err, ErrorCodeInternalServerError)
+	AssertACPError(s.T(), err, api.ErrorCodeInternalServerError)
 
 	s.pair.TestAgent.SetShouldError("session/new", false)
 	sessionResponse, err := s.pair.AgentConn.SessionNew(ctx, request)
@@ -77,13 +79,13 @@ func (s *ErrorHandlingTestSuite) TestSessionErrors() {
 
 	s.pair.TestAgent.SetShouldError("session/load", true)
 
-	loadRequest := &LoadSessionRequest{
-		SessionId: SessionId("nonexistent-session"),
+	loadRequest := &api.LoadSessionRequest{
+		SessionId: api.SessionId("nonexistent-session"),
 	}
 	err = s.pair.AgentConn.SessionLoad(ctx, loadRequest)
 
 	s.Require().Error(err)
-	AssertACPError(s.T(), err, ErrorCodeNotFound)
+	AssertACPError(s.T(), err, api.ErrorCodeNotFound)
 
 	s.pair.TestAgent.SetShouldError("session/load", false)
 	loadRequest.SessionId = sessionResponse.SessionId
@@ -104,7 +106,7 @@ func (s *ErrorHandlingTestSuite) TestFileSystemErrors() {
 
 	s.Require().Error(err)
 	s.Nil(result)
-	AssertACPError(s.T(), err, ErrorCodeNotFound)
+	AssertACPError(s.T(), err, api.ErrorCodeNotFound)
 
 	s.pair.TestClient.SetShouldError("fs/write_text_file", true)
 
@@ -112,7 +114,7 @@ func (s *ErrorHandlingTestSuite) TestFileSystemErrors() {
 	err = s.pair.ClientConn.FsWriteTextFile(ctx, writeRequest)
 
 	s.Require().Error(err)
-	AssertACPError(s.T(), err, ErrorCodeForbidden)
+	AssertACPError(s.T(), err, api.ErrorCodeForbidden)
 }
 
 func (s *ErrorHandlingTestSuite) TestPromptErrors() {
@@ -128,7 +130,7 @@ func (s *ErrorHandlingTestSuite) TestPromptErrors() {
 
 	s.Require().Error(err)
 	s.Nil(result)
-	AssertACPError(s.T(), err, ErrorCodeInternalServerError)
+	AssertACPError(s.T(), err, api.ErrorCodeInternalServerError)
 }
 
 // Permission operations are not yet implemented as RPC methods.
@@ -142,18 +144,18 @@ func (s *ErrorHandlingTestSuite) TestAllErrorCodes() {
 		code        int
 		description string
 	}{
-		{ErrorCodeInitializationError, "Initialization Error"},
-		{ErrorCodeUnauthorized, "Unauthorized"},
-		{ErrorCodeForbidden, "Forbidden"},
-		{ErrorCodeNotFound, "Not Found"},
-		{ErrorCodeConflict, "Conflict"},
-		{ErrorCodeTooManyRequests, "Too Many Requests"},
-		{ErrorCodeInternalServerError, "Internal Server Error"},
+		{api.ErrorCodeInitializationError, "Initialization Error"},
+		{api.ErrorCodeUnauthorized, "Unauthorized"},
+		{api.ErrorCodeForbidden, "Forbidden"},
+		{api.ErrorCodeNotFound, "Not Found"},
+		{api.ErrorCodeConflict, "Conflict"},
+		{api.ErrorCodeTooManyRequests, "Too Many Requests"},
+		{api.ErrorCodeInternalServerError, "Internal Server Error"},
 	}
 
 	for _, tc := range errorCodes {
 		s.Run(tc.description, func() {
-			err := &ACPError{
+			err := &api.ACPError{
 				Code:    tc.code,
 				Message: tc.description,
 			}
@@ -175,7 +177,7 @@ func (s *ErrorHandlingTestSuite) TestErrorRecovery() {
 	readRequest := SampleReadTextFileRequest("session-1", "/test/file.txt")
 	_, err := s.pair.ClientConn.FsReadTextFile(ctx, readRequest)
 	s.Require().Error(err)
-	AssertACPError(s.T(), err, ErrorCodeNotFound)
+	AssertACPError(s.T(), err, api.ErrorCodeNotFound)
 
 	s.pair.TestClient.SetShouldError("fs/read_text_file", false)
 	s.pair.TestClient.AddFileContent("/test/file.txt", "recovered content")
@@ -202,8 +204,8 @@ func (s *ErrorHandlingTestSuite) TestMixedSuccessAndFailure() {
 	}{
 		{"/success/file1.txt", true, 0},
 		{"/success/file2.txt", true, 0},
-		{"/fail/file1.txt", false, ErrorCodeNotFound},
-		{"/fail/file2.txt", false, ErrorCodeNotFound},
+		{"/fail/file1.txt", false, api.ErrorCodeNotFound},
+		{"/fail/file2.txt", false, api.ErrorCodeNotFound},
 	}
 
 	s.pair.TestClient.SetShouldError("fs/read_text_file", false)
@@ -235,7 +237,7 @@ func (s *ErrorHandlingTestSuite) TestMixedSuccessAndFailure() {
 	}
 }
 
-func (s *ErrorHandlingTestSuite) initializeConnection(ctx context.Context) *InitializeResponse {
+func (s *ErrorHandlingTestSuite) initializeConnection(ctx context.Context) *api.InitializeResponse {
 	request := SampleInitializeRequest()
 	response, err := s.pair.AgentConn.Initialize(ctx, request)
 	s.Require().NoError(err)

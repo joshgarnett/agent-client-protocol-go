@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -80,10 +81,10 @@ func (h *HandlerRegistry) Handler() jsonrpc2.Handler {
 
 // RegisterInitializeHandler registers a typed handler for the initialize method.
 func (h *HandlerRegistry) RegisterInitializeHandler(
-	handler func(_ context.Context, params *InitializeRequest) (*InitializeResponse, error),
+	handler func(_ context.Context, params *api.InitializeRequest) (*api.InitializeResponse, error),
 ) {
-	h.RegisterMethod(MethodInitialize, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
-		var params InitializeRequest
+	h.RegisterMethod(api.MethodInitialize, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
+		var params api.InitializeRequest
 		if err := json.Unmarshal(rawParams, &params); err != nil {
 			return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "Invalid parameters"}
 		}
@@ -93,10 +94,10 @@ func (h *HandlerRegistry) RegisterInitializeHandler(
 
 // RegisterAuthenticateHandler registers a typed handler for the authenticate method.
 func (h *HandlerRegistry) RegisterAuthenticateHandler(
-	handler func(_ context.Context, params *AuthenticateRequest) error,
+	handler func(_ context.Context, params *api.AuthenticateRequest) error,
 ) {
-	h.RegisterMethod(MethodAuthenticate, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
-		var params AuthenticateRequest
+	h.RegisterMethod(api.MethodAuthenticate, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
+		var params api.AuthenticateRequest
 		if err := json.Unmarshal(rawParams, &params); err != nil {
 			return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "Invalid parameters"}
 		}
@@ -106,10 +107,10 @@ func (h *HandlerRegistry) RegisterAuthenticateHandler(
 
 // RegisterSessionNewHandler registers a typed handler for the session/new method.
 func (h *HandlerRegistry) RegisterSessionNewHandler(
-	handler func(_ context.Context, params *NewSessionRequest) (*NewSessionResponse, error),
+	handler func(_ context.Context, params *api.NewSessionRequest) (*api.NewSessionResponse, error),
 ) {
-	h.RegisterMethod(MethodSessionNew, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
-		var params NewSessionRequest
+	h.RegisterMethod(api.MethodSessionNew, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
+		var params api.NewSessionRequest
 		if err := json.Unmarshal(rawParams, &params); err != nil {
 			return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "Invalid parameters"}
 		}
@@ -119,10 +120,10 @@ func (h *HandlerRegistry) RegisterSessionNewHandler(
 
 // RegisterSessionLoadHandler registers a typed handler for the session/load method.
 func (h *HandlerRegistry) RegisterSessionLoadHandler(
-	handler func(_ context.Context, params *LoadSessionRequest) error,
+	handler func(_ context.Context, params *api.LoadSessionRequest) error,
 ) {
-	h.RegisterMethod(MethodSessionLoad, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
-		var params LoadSessionRequest
+	h.RegisterMethod(api.MethodSessionLoad, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
+		var params api.LoadSessionRequest
 		if err := json.Unmarshal(rawParams, &params); err != nil {
 			return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "Invalid parameters"}
 		}
@@ -132,10 +133,10 @@ func (h *HandlerRegistry) RegisterSessionLoadHandler(
 
 // RegisterSessionPromptHandler registers a typed handler for the session/prompt method.
 func (h *HandlerRegistry) RegisterSessionPromptHandler(
-	handler func(_ context.Context, params *PromptRequest) (*PromptResponse, error),
+	handler func(_ context.Context, params *api.PromptRequest) (*api.PromptResponse, error),
 ) {
-	h.RegisterMethod(MethodSessionPrompt, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
-		var params PromptRequest
+	h.RegisterMethod(api.MethodSessionPrompt, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
+		var params api.PromptRequest
 		if err := json.Unmarshal(rawParams, &params); err != nil {
 			return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "Invalid parameters"}
 		}
@@ -147,10 +148,10 @@ func (h *HandlerRegistry) RegisterSessionPromptHandler(
 
 // RegisterFsReadTextFileHandler registers a typed handler for the fs/read_text_file method.
 func (h *HandlerRegistry) RegisterFsReadTextFileHandler(
-	handler func(_ context.Context, params *ReadTextFileRequest) (*ReadTextFileResponse, error),
+	handler func(_ context.Context, params *api.ReadTextFileRequest) (*api.ReadTextFileResponse, error),
 ) {
-	h.RegisterMethod(MethodFsReadTextFile, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
-		var params ReadTextFileRequest
+	h.RegisterMethod(api.MethodFsReadTextFile, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
+		var params api.ReadTextFileRequest
 		if err := json.Unmarshal(rawParams, &params); err != nil {
 			return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "Invalid parameters"}
 		}
@@ -160,13 +161,57 @@ func (h *HandlerRegistry) RegisterFsReadTextFileHandler(
 
 // RegisterFsWriteTextFileHandler registers a typed handler for the fs/write_text_file method.
 func (h *HandlerRegistry) RegisterFsWriteTextFileHandler(
-	handler func(_ context.Context, params *WriteTextFileRequest) error,
+	handler func(_ context.Context, params *api.WriteTextFileRequest) error,
 ) {
-	h.RegisterMethod(MethodFsWriteTextFile, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
-		var params WriteTextFileRequest
+	h.RegisterMethod(api.MethodFsWriteTextFile, func(ctx context.Context, rawParams json.RawMessage) (any, error) {
+		var params api.WriteTextFileRequest
 		if err := json.Unmarshal(rawParams, &params); err != nil {
 			return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "Invalid parameters"}
 		}
 		return nil, handler(ctx, &params)
+	})
+}
+
+// RegisterSessionRequestPermissionHandler registers a typed handler for the session/request_permission method.
+func (h *HandlerRegistry) RegisterSessionRequestPermissionHandler(
+	handler func(_ context.Context, params *api.RequestPermissionRequest) (*api.RequestPermissionResponse, error),
+) {
+	h.RegisterMethod(
+		api.MethodSessionRequestPermission,
+		func(ctx context.Context, rawParams json.RawMessage) (any, error) {
+			var params api.RequestPermissionRequest
+			if err := json.Unmarshal(rawParams, &params); err != nil {
+				return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "Invalid parameters"}
+			}
+			return handler(ctx, &params)
+		},
+	)
+}
+
+// Notification handlers.
+
+// RegisterSessionUpdateHandler registers a typed handler for the session/update notification.
+func (h *HandlerRegistry) RegisterSessionUpdateHandler(
+	handler func(_ context.Context, params *api.SessionNotification) error,
+) {
+	h.RegisterNotification(api.MethodSessionUpdate, func(ctx context.Context, rawParams json.RawMessage) error {
+		var params api.SessionNotification
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return fmt.Errorf("invalid parameters: %w", err)
+		}
+		return handler(ctx, &params)
+	})
+}
+
+// RegisterSessionCancelHandler registers a typed handler for the session/cancel notification.
+func (h *HandlerRegistry) RegisterSessionCancelHandler(
+	handler func(_ context.Context, params *api.CancelNotification) error,
+) {
+	h.RegisterNotification(api.MethodSessionCancel, func(ctx context.Context, rawParams json.RawMessage) error {
+		var params api.CancelNotification
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return fmt.Errorf("invalid parameters: %w", err)
+		}
+		return handler(ctx, &params)
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -27,8 +28,8 @@ type TestAgent struct {
 	shouldError   map[string]bool
 	shouldErrorMu sync.RWMutex
 
-	capabilities AgentCapabilities
-	authMethods  []AuthMethod
+	capabilities api.AgentCapabilities
+	authMethods  []api.AuthMethod
 }
 
 type TestSession struct {
@@ -38,7 +39,7 @@ type TestSession struct {
 
 type PromptReceived struct {
 	SessionID string
-	Prompt    []PromptRequestPromptElem
+	Prompt    []api.PromptRequestPromptElem
 }
 
 // NewTestAgent creates a new test agent.
@@ -48,13 +49,13 @@ func NewTestAgent() *TestAgent {
 		promptsReceived:       make([]PromptReceived, 0),
 		cancellationsReceived: make([]string, 0),
 		shouldError:           make(map[string]bool),
-		capabilities: AgentCapabilities{
+		capabilities: api.AgentCapabilities{
 			LoadSession:        true,
-			PromptCapabilities: PromptCapabilities{},
+			PromptCapabilities: api.PromptCapabilities{},
 		},
-		authMethods: []AuthMethod{
+		authMethods: []api.AuthMethod{
 			{
-				Id:          AuthMethodId("test-auth"),
+				Id:          api.AuthMethodId("test-auth"),
 				Name:        "Test Authentication",
 				Description: stringPtr("Test authentication method"),
 			},
@@ -99,12 +100,12 @@ func (a *TestAgent) SetShouldError(method string, shouldError bool) {
 }
 
 // SetCapabilities sets the agent capabilities.
-func (a *TestAgent) SetCapabilities(capabilities AgentCapabilities) {
+func (a *TestAgent) SetCapabilities(capabilities api.AgentCapabilities) {
 	a.capabilities = capabilities
 }
 
 // SetAuthMethods sets the authentication methods.
-func (a *TestAgent) SetAuthMethods(methods []AuthMethod) {
+func (a *TestAgent) SetAuthMethods(methods []api.AuthMethod) {
 	a.authMethods = methods
 }
 
@@ -114,21 +115,24 @@ func (a *TestAgent) checkShouldError(method string) bool {
 	return a.shouldError[method]
 }
 
-func (a *TestAgent) HandleInitialize(_ context.Context, params *InitializeRequest) (*InitializeResponse, error) {
+func (a *TestAgent) HandleInitialize(
+	_ context.Context,
+	params *api.InitializeRequest,
+) (*api.InitializeResponse, error) {
 	if a.checkShouldError("initialize") {
-		return nil, &jsonrpc2.Error{Code: int64(ErrorCodeInitializationError), Message: "Initialization failed"}
+		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeInitializationError), Message: "Initialization failed"}
 	}
 
-	return &InitializeResponse{
+	return &api.InitializeResponse{
 		ProtocolVersion:   params.ProtocolVersion,
 		AgentCapabilities: a.capabilities,
 		AuthMethods:       a.authMethods,
 	}, nil
 }
 
-func (a *TestAgent) HandleAuthenticate(_ context.Context, _ *AuthenticateRequest) error {
+func (a *TestAgent) HandleAuthenticate(_ context.Context, _ *api.AuthenticateRequest) error {
 	if a.checkShouldError("authenticate") {
-		return &jsonrpc2.Error{Code: int64(ErrorCodeUnauthorized), Message: "Authentication failed"}
+		return &jsonrpc2.Error{Code: int64(api.ErrorCodeUnauthorized), Message: "Authentication failed"}
 	}
 
 	a.authMu.Lock()
@@ -138,9 +142,12 @@ func (a *TestAgent) HandleAuthenticate(_ context.Context, _ *AuthenticateRequest
 	return nil
 }
 
-func (a *TestAgent) HandleSessionNew(_ context.Context, params *NewSessionRequest) (*NewSessionResponse, error) {
+func (a *TestAgent) HandleSessionNew(
+	_ context.Context,
+	params *api.NewSessionRequest,
+) (*api.NewSessionResponse, error) {
 	if a.checkShouldError("session/new") {
-		return nil, &jsonrpc2.Error{Code: int64(ErrorCodeInternalServerError), Message: "Session creation failed"}
+		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeInternalServerError), Message: "Session creation failed"}
 	}
 
 	sessionID := fmt.Sprintf("session-%d", atomic.AddInt64(&a.sessionCounter, 1))
@@ -154,14 +161,14 @@ func (a *TestAgent) HandleSessionNew(_ context.Context, params *NewSessionReques
 	defer a.sessionsMu.Unlock()
 	a.sessions[sessionID] = session
 
-	return &NewSessionResponse{
-		SessionId: SessionId(sessionID),
+	return &api.NewSessionResponse{
+		SessionId: api.SessionId(sessionID),
 	}, nil
 }
 
-func (a *TestAgent) HandleSessionLoad(_ context.Context, params *LoadSessionRequest) error {
+func (a *TestAgent) HandleSessionLoad(_ context.Context, params *api.LoadSessionRequest) error {
 	if a.checkShouldError("session/load") {
-		return &jsonrpc2.Error{Code: int64(ErrorCodeNotFound), Message: "Session not found"}
+		return &jsonrpc2.Error{Code: int64(api.ErrorCodeNotFound), Message: "Session not found"}
 	}
 
 	// For testing, we just verify the session exists.
@@ -170,15 +177,15 @@ func (a *TestAgent) HandleSessionLoad(_ context.Context, params *LoadSessionRequ
 	a.sessionsMu.RUnlock()
 
 	if !exists {
-		return &ACPError{Code: ErrorCodeNotFound, Message: "Session not found"}
+		return &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Session not found"}
 	}
 
 	return nil
 }
 
-func (a *TestAgent) HandleSessionPrompt(_ context.Context, params *PromptRequest) (*PromptResponse, error) {
+func (a *TestAgent) HandleSessionPrompt(_ context.Context, params *api.PromptRequest) (*api.PromptResponse, error) {
 	if a.checkShouldError("session/prompt") {
-		return nil, &jsonrpc2.Error{Code: int64(ErrorCodeInternalServerError), Message: "Prompt processing failed"}
+		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeInternalServerError), Message: "Prompt processing failed"}
 	}
 
 	a.promptsMu.Lock()
@@ -188,14 +195,14 @@ func (a *TestAgent) HandleSessionPrompt(_ context.Context, params *PromptRequest
 	})
 	a.promptsMu.Unlock()
 
-	return &PromptResponse{
+	return &api.PromptResponse{
 		StopReason: "end_turn",
 	}, nil
 }
 
-func (a *TestAgent) HandleSessionCancel(_ context.Context, params *CancelNotification) error {
+func (a *TestAgent) HandleSessionCancel(_ context.Context, params *api.CancelNotification) error {
 	if a.checkShouldError("session/cancel") {
-		return &jsonrpc2.Error{Code: int64(ErrorCodeNotFound), Message: "Session not found"}
+		return &jsonrpc2.Error{Code: int64(api.ErrorCodeNotFound), Message: "Session not found"}
 	}
 
 	a.cancellationsMu.Lock()

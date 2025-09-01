@@ -188,7 +188,7 @@ func (s *TransportTestSuite) TestConnectionLifecycle() {
 
 	// Test method calls.
 	var result map[string]interface{}
-	err := clientConn.Call(ctx, "testMethod", map[string]string{"param": "value"}, &result)
+	err := clientConn.Call(ctx, "testapi.Method", map[string]string{"param": "value"}, &result)
 	s.Require().NoError(err)
 	s.Equal("ok", result["response"])
 
@@ -228,7 +228,7 @@ func (s *TransportTestSuite) TestConnectionError() {
 
 	// Test error propagation.
 	var result interface{}
-	err := clientConn.Call(ctx, "errorMethod", nil, &result)
+	err := clientConn.Call(ctx, "errorapi.Method", nil, &result)
 	s.Require().Error(err)
 
 	// Check it's a JSON-RPC error.
@@ -303,7 +303,7 @@ func (s *TransportTestSuite) TestConnectionTimeout() {
 
 	// Test timeout.
 	var result interface{}
-	err := clientConn.Call(ctx, "slowMethod", nil, &result)
+	err := clientConn.Call(ctx, "slowapi.Method", nil, &result)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "context deadline exceeded")
 }

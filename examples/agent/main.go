@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp"
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
 )
 
 // stdioReadWriteCloser combines stdin and stdout into a ReadWriteCloser.
@@ -47,14 +48,14 @@ func main() {
 }
 
 // handleInitialize handles the initialize request from the client.
-func handleInitialize(_ context.Context, params *acp.InitializeRequest) (*acp.InitializeResponse, error) {
+func handleInitialize(_ context.Context, params *api.InitializeRequest) (*api.InitializeResponse, error) {
 	log.Printf("Received initialize request: %+v", params)
 
 	// Return our capabilities.
-	response := &acp.InitializeResponse{
-		AgentCapabilities: acp.AgentCapabilities{
+	response := &api.InitializeResponse{
+		AgentCapabilities: api.AgentCapabilities{
 			LoadSession:        true,
-			PromptCapabilities: acp.PromptCapabilities{
+			PromptCapabilities: api.PromptCapabilities{
 				// Add prompt capabilities based on what this agent supports.
 			},
 		},
@@ -65,14 +66,14 @@ func handleInitialize(_ context.Context, params *acp.InitializeRequest) (*acp.In
 }
 
 // handleSessionNew handles session/new requests.
-func handleSessionNew(_ context.Context, params *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
+func handleSessionNew(_ context.Context, params *api.NewSessionRequest) (*api.NewSessionResponse, error) {
 	log.Printf("Received session/new request: %+v", params)
 
 	// Create a new session ID (in practice, you'd generate a proper unique ID).
 	sessionID := "session-123"
 
-	response := &acp.NewSessionResponse{
-		SessionId: acp.SessionId(sessionID),
+	response := &api.NewSessionResponse{
+		SessionId: api.SessionId(sessionID),
 	}
 
 	log.Printf("Created new session: %s", sessionID)
@@ -80,15 +81,56 @@ func handleSessionNew(_ context.Context, params *acp.NewSessionRequest) (*acp.Ne
 }
 
 // handleSessionPrompt handles session/prompt requests.
-func handleSessionPrompt(_ context.Context, params *acp.PromptRequest) (*acp.PromptResponse, error) {
+func handleSessionPrompt(ctx context.Context, params *api.PromptRequest) (*api.PromptResponse, error) {
 	log.Printf("Received session/prompt request for session: %v", params.SessionId)
 
-	// For this example, we'll just echo back a simple response.
-	// In a real agent, you'd process the prompt and generate a meaningful response.
+	// In a real implementation, you would:
+	// 1. Send the prompt to your LLM
+	// 2. Process any tool calls requested by the LLM
+	// 3. Send session/update notifications for progress
+	// 4. Return the final response
 
-	response := &acp.PromptResponse{
-		// Add response content based on the prompt.
-		// This would typically involve AI processing, tool usage, etc.
+	// Example: Simulate agent processing with session updates using type-safe generated types
+	if conn, ok := ctx.Value("agent_connection").(*acp.AgentConnection); ok {
+		// Create a text content block
+		textContent := api.NewContentBlockText(nil, "I'll analyze your request...")
+
+		// Send agent message chunk using type-safe generated union
+		agentMessageUpdate := api.NewSessionUpdateAgentMessageChunk(textContent)
+		err := conn.SendSessionUpdate(ctx, &api.SessionNotification{
+			SessionId: params.SessionId,
+			Update:    agentMessageUpdate,
+		})
+		if err != nil {
+			log.Printf("Error sending session update: %v", err)
+		}
+
+		// Simulate tool call with type-safe enums
+		toolKind := api.ToolKindThink
+		toolStatus := api.ToolCallStatusCompleted
+		toolCallUpdate := api.NewSessionUpdateToolCall(
+			[]interface{}{"Processing request..."}, // content
+			&toolKind,                              // kind
+			nil,                                    // locations
+			"analyze request",                      // rawInput
+			"request analyzed",                     // rawOutput
+			&toolStatus,                            // status
+			"Processing request",                   // title
+			nil,                                    // toolCallId
+		)
+
+		err = conn.SendSessionUpdate(ctx, &api.SessionNotification{
+			SessionId: params.SessionId,
+			Update:    toolCallUpdate,
+		})
+		if err != nil {
+			log.Printf("Error sending tool call update: %v", err)
+		}
+	}
+
+	// Use type-safe enum for stop reason
+	response := &api.PromptResponse{
+		StopReason: api.StopReasonEndTurn,
 	}
 
 	log.Println("Sent prompt response")

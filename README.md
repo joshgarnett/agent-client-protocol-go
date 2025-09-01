@@ -132,25 +132,29 @@ registry.RegisterSessionCancelHandler(func(ctx context.Context, params *acp.Sess
 
 ## Protocol Support
 
-This implementation supports Agent Client Protocol version 1 and includes:
+This implementation supports Agent Client Protocol version 1 with the following methods:
 
-### Agent Methods (Agent -> Client)
+### Agent Methods (Client -> Agent)
 - `initialize`: Initialize connection with capabilities
-- `authenticate`: Authenticate with the client  
-- `session/new`: Create a new session
-- `session/load`: Load an existing session
-- `session/prompt`: Send a prompt to the client
-- `session/cancel`: Cancel session operations
+- `authenticate`: Authenticate with the agent
+- `session/new`: Create a new session (with MCP server support)
+- `session/load`: Load an existing session (if agent supports `loadSession` capability)
+- `session/prompt`: Send a prompt to the agent
 
-### Client Methods (Client -> Agent)  
-- `fs/read_text_file`: Read text file contents
-- `fs/write_text_file`: Write text file contents
-- `session/request_permission`: Request permissions
-- `session/update`: Update session state
+### Agent Notifications (Client -> Agent)
+- `session/cancel`: Cancel ongoing operations
+
+### Client Methods (Agent -> Client)
+- `session/request_permission`: Request user authorization for tool calls
+- `fs/read_text_file`: Read text file contents (requires `fs.readTextFile` capability)
+- `fs/write_text_file`: Write text file contents (requires `fs.writeTextFile` capability)
 - `terminal/create`: Create terminal session
-- `terminal/output`: Send terminal output
+- `terminal/output`: Send terminal output  
 - `terminal/release`: Release terminal session
 - `terminal/wait_for_exit`: Wait for terminal exit
+
+### Client Notifications (Agent -> Client)
+- `session/update`: Progress updates during prompt processing (agent message chunks, tool calls, plans)
 
 ## Examples
 

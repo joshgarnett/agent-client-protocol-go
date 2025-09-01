@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -54,9 +56,9 @@ func (s *HandlerRegistryTestSuite) TestRegisterInitializeHandler() {
 
 	// Register initialize handler.
 	s.registry.RegisterInitializeHandler(
-		func(_ context.Context, params *InitializeRequest) (*InitializeResponse, error) {
+		func(_ context.Context, params *api.InitializeRequest) (*api.InitializeResponse, error) {
 			called = true
-			return &InitializeResponse{
+			return &api.InitializeResponse{
 				ProtocolVersion: params.ProtocolVersion,
 			}, nil
 		},
@@ -64,47 +66,47 @@ func (s *HandlerRegistryTestSuite) TestRegisterInitializeHandler() {
 
 	// Verify registration.
 	s.False(called)
-	s.NotNil(s.registry.methods[MethodInitialize])
+	s.NotNil(s.registry.methods[api.MethodInitialize])
 }
 
 func (s *HandlerRegistryTestSuite) TestRegisterSessionNewHandler() {
 	called := false
 
 	s.registry.RegisterSessionNewHandler(
-		func(_ context.Context, _ *NewSessionRequest) (*NewSessionResponse, error) {
+		func(_ context.Context, _ *api.NewSessionRequest) (*api.NewSessionResponse, error) {
 			called = true
-			return &NewSessionResponse{}, nil
+			return &api.NewSessionResponse{}, nil
 		},
 	)
 
 	s.False(called)
-	s.NotNil(s.registry.methods[MethodSessionNew])
+	s.NotNil(s.registry.methods[api.MethodSessionNew])
 }
 
 func (s *HandlerRegistryTestSuite) TestRegisterFsReadTextFileHandler() {
 	called := false
 
 	s.registry.RegisterFsReadTextFileHandler(
-		func(_ context.Context, _ *ReadTextFileRequest) (*ReadTextFileResponse, error) {
+		func(_ context.Context, _ *api.ReadTextFileRequest) (*api.ReadTextFileResponse, error) {
 			called = true
-			return &ReadTextFileResponse{}, nil
+			return &api.ReadTextFileResponse{}, nil
 		},
 	)
 
 	s.False(called)
-	s.NotNil(s.registry.methods[MethodFsReadTextFile])
+	s.NotNil(s.registry.methods[api.MethodFsReadTextFile])
 }
 
 func (s *HandlerRegistryTestSuite) TestRegisterFsWriteTextFileHandler() {
 	called := false
 
-	s.registry.RegisterFsWriteTextFileHandler(func(_ context.Context, _ *WriteTextFileRequest) error {
+	s.registry.RegisterFsWriteTextFileHandler(func(_ context.Context, _ *api.WriteTextFileRequest) error {
 		called = true
 		return nil
 	})
 
 	s.False(called)
-	s.NotNil(s.registry.methods[MethodFsWriteTextFile])
+	s.NotNil(s.registry.methods[api.MethodFsWriteTextFile])
 }
 
 func (s *HandlerRegistryTestSuite) TestHandlerCreation() {
@@ -215,5 +217,5 @@ func TestHandlerRegistry_IntegrationErrorHandling(t *testing.T) {
 	assert.Nil(t, result)
 
 	// Check it's the expected ACP error.
-	AssertACPError(t, err, ErrorCodeNotFound)
+	AssertACPError(t, err, api.ErrorCodeNotFound)
 }

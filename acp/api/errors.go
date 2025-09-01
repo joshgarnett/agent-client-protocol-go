@@ -1,4 +1,4 @@
-package acp
+package api
 
 import (
 	"fmt"
@@ -18,8 +18,6 @@ const (
 )
 
 // ACPError represents an Agent Client Protocol error.
-//
-//nolint:revive // ACPError is more descriptive than Error for this specific protocol
 type ACPError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+
 	"github.com/stretchr/testify/suite"
 )
 
@@ -41,7 +43,7 @@ func (s *ProtocolFlowTestSuite) TestCompleteInitializationFlow() {
 
 	// 2. Authenticate - client authenticates with agent.
 	s.Require().NotEmpty(response.AuthMethods)
-	authRequest := &AuthenticateRequest{
+	authRequest := &api.AuthenticateRequest{
 		MethodId: response.AuthMethods[0].Id,
 	}
 	err = s.pair.AgentConn.Authenticate(ctx, authRequest)
@@ -76,7 +78,7 @@ func (s *ProtocolFlowTestSuite) TestCompleteSessionFlow() {
 	s.Equal(sessionRequest.Cwd, session.CWD)
 
 	// 2. Load existing session.
-	loadRequest := &LoadSessionRequest{
+	loadRequest := &api.LoadSessionRequest{
 		SessionId: sessionResponse.SessionId,
 	}
 	err = s.pair.AgentConn.SessionLoad(ctx, loadRequest)
@@ -177,7 +179,7 @@ func (s *ProtocolFlowTestSuite) TestErrorRecoveryFlow() {
 
 	s.Require().Error(err)
 	s.Nil(result)
-	AssertACPError(s.T(), err, ErrorCodeNotFound)
+	AssertACPError(s.T(), err, api.ErrorCodeNotFound)
 
 	// 2. Recover from error - disable error simulation.
 	s.pair.TestClient.SetShouldError("fs/read_text_file", false)
@@ -214,7 +216,7 @@ func (s *ProtocolFlowTestSuite) TestCancellationFlow() {
 	sessionResponse := s.createSession(ctx)
 
 	// Send cancellation notification.
-	cancelRequest := &CancelNotification{
+	cancelRequest := &api.CancelNotification{
 		SessionId: sessionResponse.SessionId,
 	}
 	err := s.pair.AgentConn.SessionCancel(ctx, cancelRequest)
@@ -235,7 +237,7 @@ func (s *ProtocolFlowTestSuite) TestCancellationFlow() {
 
 // Helper methods.
 
-func (s *ProtocolFlowTestSuite) initializeConnection(ctx context.Context) *InitializeResponse {
+func (s *ProtocolFlowTestSuite) initializeConnection(ctx context.Context) *api.InitializeResponse {
 	request := SampleInitializeRequest()
 	response, err := s.pair.AgentConn.Initialize(ctx, request)
 	s.Require().NoError(err)
@@ -243,7 +245,7 @@ func (s *ProtocolFlowTestSuite) initializeConnection(ctx context.Context) *Initi
 	return response
 }
 
-func (s *ProtocolFlowTestSuite) createSession(ctx context.Context) *NewSessionResponse {
+func (s *ProtocolFlowTestSuite) createSession(ctx context.Context) *api.NewSessionResponse {
 	request := SampleNewSessionRequest()
 	response, err := s.pair.AgentConn.SessionNew(ctx, request)
 	s.Require().NoError(err)
