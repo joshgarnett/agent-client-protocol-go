@@ -14,14 +14,15 @@ const (
 
 // Client method constants
 const (
-	MethodSessionUpdate            = "session/update"
-	MethodTerminalCreate           = "terminal/create"
-	MethodTerminalOutput           = "terminal/output"
-	MethodTerminalRelease          = "terminal/release"
-	MethodTerminalWaitForExit      = "terminal/wait_for_exit"
 	MethodFsReadTextFile           = "fs/read_text_file"
 	MethodFsWriteTextFile          = "fs/write_text_file"
 	MethodSessionRequestPermission = "session/request_permission"
+	MethodSessionUpdate            = "session/update"
+	MethodTerminalCreate           = "terminal/create"
+	MethodTerminalKill             = "terminal/kill"
+	MethodTerminalOutput           = "terminal/output"
+	MethodTerminalRelease          = "terminal/release"
+	MethodTerminalWaitForExit      = "terminal/wait_for_exit"
 )
 
 // Protocol version

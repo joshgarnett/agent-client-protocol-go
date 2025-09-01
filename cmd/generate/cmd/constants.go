@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -61,7 +62,16 @@ func doGenerateConstants() error {
 	if len(meta.AgentMethods) > 0 {
 		output.WriteString("// Agent method constants\n")
 		output.WriteString("const (\n")
-		for key, value := range meta.AgentMethods {
+
+		// Sort keys for consistent output
+		agentKeys := make([]string, 0, len(meta.AgentMethods))
+		for key := range meta.AgentMethods {
+			agentKeys = append(agentKeys, key)
+		}
+		sort.Strings(agentKeys)
+
+		for _, key := range agentKeys {
+			value := meta.AgentMethods[key]
 			constName := "Method" + toCamelCase(key)
 			output.WriteString(fmt.Sprintf("\t%s = %q\n", constName, value))
 		}
@@ -72,7 +82,16 @@ func doGenerateConstants() error {
 	if len(meta.ClientMethods) > 0 {
 		output.WriteString("// Client method constants\n")
 		output.WriteString("const (\n")
-		for key, value := range meta.ClientMethods {
+
+		// Sort keys for consistent output
+		clientKeys := make([]string, 0, len(meta.ClientMethods))
+		for key := range meta.ClientMethods {
+			clientKeys = append(clientKeys, key)
+		}
+		sort.Strings(clientKeys)
+
+		for _, key := range clientKeys {
+			value := meta.ClientMethods[key]
 			constName := "Method" + toCamelCase(key)
 			output.WriteString(fmt.Sprintf("\t%s = %q\n", constName, value))
 		}
