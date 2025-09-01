@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // TestClient implements a mock client for testing.
@@ -107,7 +106,7 @@ func (c *TestClient) HandleFsReadTextFile(
 	params *api.ReadTextFileRequest,
 ) (*api.ReadTextFileResponse, error) {
 	if c.checkShouldError("fs/read_text_file") {
-		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeNotFound), Message: "File not found"}
+		return nil, &api.ACPError{Code: api.ErrorCodeNotFound, Message: "File not found"}
 	}
 
 	c.fileContentsMu.RLock()
@@ -125,7 +124,7 @@ func (c *TestClient) HandleFsReadTextFile(
 
 func (c *TestClient) HandleFsWriteTextFile(_ context.Context, params *api.WriteTextFileRequest) error {
 	if c.checkShouldError("fs/write_text_file") {
-		return &jsonrpc2.Error{Code: int64(api.ErrorCodeForbidden), Message: "Write not allowed"}
+		return &api.ACPError{Code: api.ErrorCodeForbidden, Message: "Write not allowed"}
 	}
 
 	c.writtenFilesMu.Lock()
@@ -143,7 +142,7 @@ func (c *TestClient) HandleRequestPermission(
 	_ *api.RequestPermissionRequest,
 ) (*api.RequestPermissionResponse, error) {
 	if c.checkShouldError("session/request_permission") {
-		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeUnauthorized), Message: "Permission denied"}
+		return nil, &api.ACPError{Code: api.ErrorCodeUnauthorized, Message: "Permission denied"}
 	}
 
 	c.permissionMu.Lock()

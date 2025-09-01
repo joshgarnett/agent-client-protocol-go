@@ -109,21 +109,6 @@ func (s *HandlerRegistryTestSuite) TestRegisterFsWriteTextFileHandler() {
 	s.NotNil(s.registry.methods[api.MethodFsWriteTextFile])
 }
 
-func (s *HandlerRegistryTestSuite) TestHandlerCreation() {
-	// Register some handlers.
-	s.registry.RegisterMethod("test/method", func(_ context.Context, _ json.RawMessage) (any, error) {
-		return "result", nil
-	})
-
-	s.registry.RegisterNotification("test/notification", func(_ context.Context, _ json.RawMessage) error {
-		return nil
-	})
-
-	// Create handler.
-	handler := s.registry.Handler()
-	s.NotNil(handler)
-}
-
 func TestHandlerRegistryTestSuite(t *testing.T) {
 	suite.Run(t, new(HandlerRegistryTestSuite))
 }

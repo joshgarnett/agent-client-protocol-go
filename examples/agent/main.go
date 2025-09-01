@@ -56,14 +56,22 @@ func main() {
 	stdio := stdioReadWriteCloser{Reader: os.Stdin, Writer: os.Stdout}
 
 	// Create connection with all handlers registered
-	conn := acp.NewAgentConnectionStdio(ctx, stdio, registry.Handler())
+	conn, err := acp.NewAgentConnectionStdio(
+		ctx,
+		stdio,
+		registry,
+		10*time.Second, //nolint:mnd // 10 second timeout is reasonable for agent operations
+	)
+	if err != nil {
+		log.Fatalf("Failed to create agent connection: %v", err)
+	}
 
 	// Store connection globally for use by handlers
 	agentConn = conn
 
 	log.Printf("Example Agent started (PID: %d), waiting for client connection...\n", os.Getpid())
-	if err := conn.Wait(); err != nil {
-		log.Printf("Connection closed: %v\n", err)
+	if waitErr := conn.Wait(); waitErr != nil {
+		log.Printf("Connection closed: %v\n", waitErr)
 	} else {
 		log.Println("Connection closed gracefully")
 	}
@@ -130,31 +138,30 @@ func handleSessionPrompt(_ context.Context, params *api.PromptRequest) (*api.Pro
 		return &api.PromptResponse{StopReason: api.StopReasonRefusal}, errors.New("agent connection not available")
 	}
 
-	// With the hybrid architecture, SendSessionUpdate() is now safe to call from handlers!
-	// However, synchronous Call() methods (like requestPermission) can still deadlock,
-	// so we still use async processing for those parts.
+	// With the new jsonrpc2 library, the connection is fully bidirectional,
+	// allowing handlers to make blocking calls that are safely multiplexed
+	// over the same connection without causing a deadlock.
+	// This matches the TypeScript reference implementation pattern.
 
-	// Create a background context that can be cancelled independently
-	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+	// Create a cancellable context for this prompt
+	promptCtx, promptCancel := context.WithCancel(context.Background())
 
 	// Store the cancel function for this session
-	activePrompts.Store(string(params.SessionId), backgroundCancel)
+	activePrompts.Store(string(params.SessionId), promptCancel)
 
-	go func() {
-		defer func() {
-			// Clean up when done
-			activePrompts.Delete(string(params.SessionId))
-		}()
-
-		stopReason, err := simulateAgentTurn(backgroundCtx, agentConn, params)
-		if err != nil {
-			log.Printf("[PROMPT] Error during agent simulation: %v\n", err)
-		} else {
-			log.Printf("[PROMPT] Agent turn completed with stop reason: %s\n", stopReason)
-		}
+	defer func() {
+		// Clean up when done
+		activePrompts.Delete(string(params.SessionId))
 	}()
 
-	// Return immediately - the agent work continues in background
+	// Now we can call agent methods directly from the handler!
+	stopReason, err := simulateAgentTurn(promptCtx, agentConn, params)
+	if err != nil {
+		log.Printf("[PROMPT] Error during agent simulation: %v\n", err)
+		return &api.PromptResponse{StopReason: api.StopReasonRefusal}, err
+	}
+
+	log.Printf("[PROMPT] Agent turn completed with stop reason: %s\n", stopReason)
 	return &api.PromptResponse{StopReason: api.StopReasonEndTurn}, nil
 }
 
@@ -390,7 +397,8 @@ func requestPermission(
 		OptionId: api.PermissionOptionId("reject"),
 	}
 
-	// Make the permission request
+	// Make the permission request. This is safe to call from a handler because the
+	// underlying `golang.org/x/exp/jsonrpc2` library supports re-entrant calls.
 	permissionRequest := &api.RequestPermissionRequest{
 		SessionId: sessionID,
 		ToolCall:  toolCallForPermission,

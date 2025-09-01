@@ -2,14 +2,12 @@ package acp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
-	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,9 +28,9 @@ func TestWrapError(t *testing.T) {
 	})
 
 	t.Run("Wrap Nil Error", func(t *testing.T) {
-		wrapped := WrapError(nil, int(jsonrpc2.CodeInvalidParams), "validation failed")
+		wrapped := WrapError(nil, api.CodeInvalidParams, "validation failed")
 
-		assert.Equal(t, int(jsonrpc2.CodeInvalidParams), wrapped.Code)
+		assert.Equal(t, api.CodeInvalidParams, wrapped.Code)
 		assert.Equal(t, "validation failed", wrapped.Message)
 		assert.Nil(t, wrapped.Data)
 	})
@@ -130,58 +128,6 @@ func TestContextError(t *testing.T) {
 	})
 }
 
-func TestJSONRPCConversion(t *testing.T) {
-	t.Run("FromJSONRPCError", func(t *testing.T) {
-		rpcErr := &jsonrpc2.Error{
-			Code:    jsonrpc2.CodeMethodNotFound,
-			Message: "method not found",
-			Data:    nil,
-		}
-
-		acpErr := FromJSONRPCError(rpcErr)
-		assert.Equal(t, int(jsonrpc2.CodeMethodNotFound), acpErr.Code)
-		assert.Equal(t, "method not found", acpErr.Message)
-		assert.Nil(t, acpErr.Data)
-	})
-
-	t.Run("FromJSONRPCError with Data", func(t *testing.T) {
-		dataBytes := json.RawMessage(`{"detail": "extra info"}`)
-		rpcErr := &jsonrpc2.Error{
-			Code:    jsonrpc2.CodeInvalidParams,
-			Message: "invalid params",
-			Data:    &dataBytes,
-		}
-
-		acpErr := FromJSONRPCError(rpcErr)
-		assert.Equal(t, int(jsonrpc2.CodeInvalidParams), acpErr.Code)
-		assert.Equal(t, "invalid params", acpErr.Message)
-		assert.NotNil(t, acpErr.Data)
-	})
-
-	t.Run("FromJSONRPCError Nil", func(t *testing.T) {
-		acpErr := FromJSONRPCError(nil)
-		assert.Nil(t, acpErr)
-	})
-
-	t.Run("ToJSONRPCError", func(t *testing.T) {
-		acpErr := &api.ACPError{
-			Code:    api.ErrorCodeAuthRequired,
-			Message: "auth required",
-			Data:    map[string]string{"realm": "api"},
-		}
-
-		rpcErr := ToJSONRPCError(acpErr)
-		assert.Equal(t, int64(api.ErrorCodeAuthRequired), rpcErr.Code)
-		assert.Equal(t, "auth required", rpcErr.Message)
-		assert.NotNil(t, rpcErr.Data)
-	})
-
-	t.Run("ToJSONRPCError Nil", func(t *testing.T) {
-		rpcErr := ToJSONRPCError(nil)
-		assert.Nil(t, rpcErr)
-	})
-}
-
 func TestFromStandardError(t *testing.T) {
 	t.Run("Standard Error", func(t *testing.T) {
 		err := errors.New("standard error")
@@ -202,17 +148,6 @@ func TestFromStandardError(t *testing.T) {
 		assert.Equal(t, original.Message, converted.Message)
 	})
 
-	t.Run("JSONRPCError", func(t *testing.T) {
-		rpcErr := &jsonrpc2.Error{
-			Code:    jsonrpc2.CodeInvalidRequest,
-			Message: "invalid request",
-		}
-
-		converted := FromStandardError(rpcErr)
-		assert.Equal(t, int(jsonrpc2.CodeInvalidRequest), converted.Code)
-		assert.Equal(t, "invalid request", converted.Message)
-	})
-
 	t.Run("Nil Error", func(t *testing.T) {
 		converted := FromStandardError(nil)
 		assert.Nil(t, converted)
@@ -223,7 +158,7 @@ func TestValidationHelpers(t *testing.T) {
 	t.Run("NewValidationError", func(t *testing.T) {
 		err := NewValidationError("email", "invalid format")
 
-		assert.Equal(t, int(jsonrpc2.CodeInvalidParams), err.Code)
+		assert.Equal(t, api.CodeInvalidParams, err.Code)
 		assert.Contains(t, err.Message, "email")
 		assert.Contains(t, err.Message, "invalid format")
 
@@ -431,7 +366,7 @@ func TestErrorChecks(t *testing.T) {
 	})
 
 	t.Run("IsValidationError", func(t *testing.T) {
-		validationErr := &api.ACPError{Code: int(jsonrpc2.CodeInvalidParams), Message: "invalid params"}
+		validationErr := &api.ACPError{Code: api.CodeInvalidParams, Message: "invalid params"}
 		otherErr := &api.ACPError{Code: api.ErrorCodeNotFound, Message: "not found"}
 		standardErr := errors.New("standard error")
 
@@ -478,13 +413,13 @@ func TestErrorFormatting(t *testing.T) {
 
 	t.Run("ACPError Format with Data", func(t *testing.T) {
 		err := api.ACPError{
-			Code:    int(jsonrpc2.CodeInvalidParams),
+			Code:    api.CodeInvalidParams,
 			Message: "invalid parameters",
 			Data:    map[string]string{"field": "email"},
 		}
 
 		errStr := err.Error()
-		assert.Contains(t, errStr, strconv.Itoa(int(jsonrpc2.CodeInvalidParams)))
+		assert.Contains(t, errStr, strconv.Itoa(api.CodeInvalidParams))
 		assert.Contains(t, errStr, "invalid parameters")
 		assert.Contains(t, errStr, "data:")
 	})

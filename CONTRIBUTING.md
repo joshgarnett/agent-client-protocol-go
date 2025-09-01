@@ -129,7 +129,7 @@ The library provides type-safe APIs wherever possible:
 
 ### JSON-RPC Foundation
 
-Built on `github.com/sourcegraph/jsonrpc2` for:
+
 - Proven JSON-RPC 2.0 implementation
 - Standard error codes and handling  
 - Flexible transport support

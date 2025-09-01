@@ -2,14 +2,12 @@ package acp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
-
-	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,28 +43,25 @@ func NewConnectionPair(t *testing.T) *ConnectionPair {
 	agentHandler.RegisterSessionNewHandler(testAgent.HandleSessionNew)
 	agentHandler.RegisterSessionLoadHandler(testAgent.HandleSessionLoad)
 	agentHandler.RegisterSessionPromptHandler(testAgent.HandleSessionPrompt)
-	agentHandler.RegisterNotification(api.MethodSessionCancel, func(ctx context.Context, params json.RawMessage) error {
-		var cancelParams api.CancelNotification
-		if err := json.Unmarshal(params, &cancelParams); err != nil {
-			return err
-		}
-		return testAgent.HandleSessionCancel(ctx, &cancelParams)
-	})
+	agentHandler.RegisterSessionCancelHandler(testAgent.HandleSessionCancel)
 
 	// Register client handlers (these handle requests FROM agent TO client).
 	clientHandler.RegisterFsReadTextFileHandler(testClient.HandleFsReadTextFile)
 	clientHandler.RegisterFsWriteTextFileHandler(testClient.HandleFsWriteTextFile)
 
-	// Create connections:.
-	// 1. Agent side: receives agent requests (initialize, session/new) and sends client requests (fs/read, fs/write)
-	// 2. Client side: receives client requests (fs/read, fs/write) and sends agent requests (initialize, session/new)
 	ctx := context.Background()
 
 	// The "agent side" connection - receives calls to agent methods, can send calls to client methods.
-	agentSideConn := NewClientConnection(ctx, transport.AgentStream(), agentHandler.Handler())
+	agentSideConn, err := NewClientConnectionStdio(ctx, transport.Agent(), agentHandler)
+	if err != nil {
+		t.Fatalf("Failed to create agent side connection: %v", err)
+	}
 
 	// The "client side" connection - receives calls to client methods, can send calls to agent methods.
-	clientSideConn := NewAgentConnection(ctx, transport.ClientStream(), clientHandler.Handler())
+	clientSideConn, err := NewAgentConnectionStdio(ctx, transport.Client(), clientHandler, testRequestTimeout)
+	if err != nil {
+		t.Fatalf("Failed to create client side connection: %v", err)
+	}
 
 	return &ConnectionPair{
 		AgentConn:     clientSideConn, // Connection that can call agent methods
@@ -190,12 +185,15 @@ func AssertACPError(t *testing.T, err error, expectedCode int) {
 		return
 	}
 
-	// Check if it's a jsonrpc2.Error containing an ACP error code.
-	var jsonrpcErr *jsonrpc2.Error
-	if errors.As(err, &jsonrpcErr) {
-		require.Equal(t, int64(expectedCode), jsonrpcErr.Code)
-		return
-	}
-
-	t.Fatalf("Expected ACP error or jsonrpc2.Error, got %T: %v", err, err)
+	// Check error message contains expected ACP error code format: "ACP Error -32004: ..."
+	errMsg := err.Error()
+	expectedCodeStr := fmt.Sprintf("ACP Error %d:", expectedCode)
+	require.Contains(
+		t,
+		errMsg,
+		expectedCodeStr,
+		"Expected error to contain ACP error code %d, got: %v",
+		expectedCode,
+		err,
+	)
 }

@@ -125,7 +125,10 @@ func runClient() error {
 	if err != nil {
 		return fmt.Errorf("failed to setup agent: %w", err)
 	}
-	conn := acp.NewClientConnectionStdio(ctx, stdio, registry.Handler())
+	conn, err := acp.NewClientConnectionStdio(ctx, stdio, registry)
+	if err != nil {
+		return fmt.Errorf("failed to create client connection: %w", err)
+	}
 
 	// Initialize connection and create session
 	sessionID, err := initializeConnection(ctx, conn)
@@ -268,6 +271,7 @@ func handleSessionRequestPermission(
 	_ context.Context,
 	params *api.RequestPermissionRequest,
 ) (*api.RequestPermissionResponse, error) {
+	log.Printf("[CLIENT_DEBUG] handleSessionRequestPermission called")
 	fmt.Printf("\n[PERMISSION] Agent requested permission for: %v\n", params.ToolCall.Title)
 
 	// ToolCall.Kind is an interface{}, need to handle it carefully
@@ -295,12 +299,14 @@ func handleSessionRequestPermission(
 		selectedOption := params.Options[0]
 		fmt.Printf("Auto-allowing: %s\n\n", selectedOption.Name)
 
-		return &api.RequestPermissionResponse{
+		response := &api.RequestPermissionResponse{
 			Outcome: map[string]interface{}{
 				"outcome":  "selected",
 				"optionId": selectedOption.OptionId,
 			},
-		}, nil
+		}
+		log.Printf("[CLIENT_DEBUG] Returning permission response: %+v", response)
+		return response, nil
 	}
 
 	// No options available

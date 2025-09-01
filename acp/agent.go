@@ -2,12 +2,15 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
-	"github.com/sourcegraph/jsonrpc2"
+	"golang.org/x/exp/jsonrpc2"
 )
 
 // ConnectionState represents the current state of the protocol connection.
@@ -22,166 +25,222 @@ const (
 
 // Errors for connection and notification handling.
 var (
-	ErrConnectionClosed       = errors.New("connection is closed")
-	ErrNotificationBufferFull = errors.New("notification buffer is full")
+	ErrConnectionClosed = errors.New("connection is closed")
 )
 
 const (
-	// notificationChannelBufferSize is the buffer size for session update notifications.
-	notificationChannelBufferSize = 50
+	// testRequestTimeout is a shorter timeout used in tests.
+	testRequestTimeout = 1 * time.Second
+	// defaultCallQueueSize is the buffer size for the call queue.
+	defaultCallQueueSize = 100
 )
 
-// AgentConnection represents a connection from an agent to a client.
-//
-// This implementation uses a hybrid approach to prevent deadlocks:
-//   - SendSessionUpdate uses a channel-based architecture (safe from handlers)
-//   - Other methods like Call use direct JSON-RPC calls (can deadlock from handlers)
-//
-// This design follows the pattern used by the Rust reference implementation.
-type AgentConnection struct {
-	conn           *jsonrpc2.Conn
-	handler        jsonrpc2.Handler
-	broadcast      *StreamBroadcast
-	state          *ConnectionStateTracker
-	notificationCh chan *api.SessionNotification
-	closeOnce      sync.Once
-	closed         bool
-	closedMu       sync.RWMutex
+// queuedCall represents a call waiting to be processed.
+type queuedCall struct {
+	ctx        context.Context
+	method     string
+	params     interface{}
+	resultChan chan callResult
 }
 
-// NewAgentConnection creates a new agent connection with the given transport.
-func NewAgentConnection(ctx context.Context, stream jsonrpc2.ObjectStream, handler jsonrpc2.Handler) *AgentConnection {
-	conn := jsonrpc2.NewConn(ctx, stream, handler)
-	broadcast := NewStreamBroadcast()
+// callResult holds the result of a queued call.
+type callResult struct {
+	result interface{}
+	err    error
+}
 
-	ac := &AgentConnection{
-		conn:           conn,
-		handler:        handler,
-		state:          NewConnectionStateTracker(),
-		broadcast:      broadcast,
-		notificationCh: make(chan *api.SessionNotification, notificationChannelBufferSize),
+// AgentConnection represents a connection from an agent to a client.
+// It abstracts away the underlying jsonrpc2 library and provides a safe way
+// to make re-entrant calls from handlers.
+type AgentConnection struct {
+	conn           *jsonrpc2.Connection
+	state          *ConnectionStateTracker
+	requestTimeout time.Duration
+
+	// Call queueing
+	callQueue chan *queuedCall
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+// binder is an internal struct that implements jsonrpc2.Binder to
+// associate the user-provided handler with the connection.
+type binder struct {
+	handler Handler
+}
+
+// Bind is called by the jsonrpc2 library to bind the handler to the connection.
+func (b *binder) Bind(_ context.Context, _ *jsonrpc2.Connection) (jsonrpc2.ConnectionOptions, error) {
+	wrappedHandler := func(ctx context.Context, req *jsonrpc2.Request) (interface{}, error) {
+		// TODO: Pass actual connection reference instead of nil
+		return b.handler.Handle(ctx, nil, req)
 	}
 
-	// Start the notification processing goroutine
-	go ac.processNotifications(ctx)
+	return jsonrpc2.ConnectionOptions{
+		Handler: jsonrpc2.HandlerFunc(wrappedHandler),
+	}, nil
+}
 
-	return ac
+// stdioDialer is a custom dialer that uses an existing io.ReadWriteCloser (like stdin/stdout).
+type stdioDialer struct {
+	rwc io.ReadWriteCloser
+}
+
+func (d stdioDialer) Dial(_ context.Context) (io.ReadWriteCloser, error) {
+	return d.rwc, nil
 }
 
 // NewAgentConnectionStdio creates a new agent connection using stdio transport.
-func NewAgentConnectionStdio(ctx context.Context, rwc io.ReadWriteCloser, handler jsonrpc2.Handler) *AgentConnection {
-	stream := jsonrpc2.NewPlainObjectStream(rwc)
-	return NewAgentConnection(ctx, stream, handler)
+func NewAgentConnectionStdio(
+	ctx context.Context,
+	rwc io.ReadWriteCloser,
+	handler Handler,
+	timeout time.Duration,
+) (*AgentConnection, error) {
+	ac := &AgentConnection{
+		state:          NewConnectionStateTracker(),
+		requestTimeout: timeout,
+		callQueue:      make(chan *queuedCall, defaultCallQueueSize),
+		closed:         make(chan struct{}),
+	}
+
+	b := &binder{
+		handler: handler,
+	}
+
+	// Create the connection using our custom dialer.
+	conn, err := jsonrpc2.Dial(ctx, stdioDialer{rwc: rwc}, b)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial connection: %w", err)
+	}
+
+	ac.conn = conn
+
+	// Start the call queue processor
+	go ac.processCallQueue(ctx)
+
+	return ac, nil
 }
 
-// processNotifications processes session update notifications in a dedicated goroutine to avoid deadlocks.
-// This matches the pattern used by the Rust reference implementation.
-func (a *AgentConnection) processNotifications(ctx context.Context) {
-	defer func() {
-		a.markClosed()
-	}()
-
+// processCallQueue processes queued calls sequentially to avoid writer contention.
+func (a *AgentConnection) processCallQueue(ctx context.Context) {
 	for {
 		select {
-		case notification, ok := <-a.notificationCh:
-			if !ok {
-				// Channel was closed, exit
-				return
-			}
-
-			// Make the actual JSON-RPC notification call
-			err := a.conn.Notify(ctx, api.MethodSessionUpdate, notification)
-			if err != nil {
-				// Log error but continue processing other notifications
-				// In a production implementation, you might want more sophisticated error handling
-				continue
-			}
-
 		case <-ctx.Done():
 			return
-		case <-a.conn.DisconnectNotify():
+		case <-a.closed:
 			return
+		case queuedCall := <-a.callQueue:
+			// Process the call directly on the connection
+			result, err := a.callDirect(queuedCall.ctx, queuedCall.method, queuedCall.params)
+
+			// Send result back to caller
+			select {
+			case queuedCall.resultChan <- callResult{result: result, err: err}:
+			case <-queuedCall.ctx.Done():
+				// Caller cancelled, ignore result
+			}
 		}
 	}
 }
 
-// markClosed marks the connection as closed and closes the notification channel.
-func (a *AgentConnection) markClosed() {
-	a.closedMu.Lock()
-	defer a.closedMu.Unlock()
-
-	if a.closed {
-		return
+// callDirect makes a direct JSON-RPC call without queueing.
+func (a *AgentConnection) callDirect(ctx context.Context, method string, params interface{}) (interface{}, error) {
+	if a.conn == nil {
+		return nil, ErrConnectionClosed
 	}
-	a.closed = true
 
-	// Close the notification channel to signal no more messages
-	close(a.notificationCh)
+	// Add a timeout to the context
+	timeoutCtx, cancel := context.WithTimeout(ctx, a.requestTimeout)
+	defer cancel()
+
+	call := a.conn.Call(timeoutCtx, method, params)
+	var result interface{}
+	if err := call.Await(timeoutCtx, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-// isClosed returns true if the connection is closed.
-func (a *AgentConnection) isClosed() bool {
-	a.closedMu.RLock()
-	defer a.closedMu.RUnlock()
-	return a.closed
-}
-
-// call makes a JSON-RPC call to the client.
-//
-// WARNING: This method can deadlock if called from within a JSON-RPC handler
-// on the same connection. Use SendSessionUpdate for notifications from handlers,
-// or make calls from background goroutines for requests.
+// call makes a JSON-RPC call to the client via the queue.
+// This prevents writer contention in high concurrency scenarios.
 func (a *AgentConnection) call(ctx context.Context, method string, params, result any) error {
-	return a.conn.Call(ctx, method, params, result)
-}
-
-// notify sends a JSON-RPC notification to the client using a channel-based approach
-// to avoid deadlocks when called from within JSON-RPC handlers.
-func (a *AgentConnection) notify(ctx context.Context, method string, params any) error {
-	if a.isClosed() {
+	if a.conn == nil {
 		return ErrConnectionClosed
 	}
 
-	// For session/update notifications, we need special handling with SessionNotification wrapper
-	if method == api.MethodSessionUpdate {
-		sessionNotification, ok := params.(*api.SessionNotification)
-		if !ok {
-			return errors.New("session/update method requires *api.SessionNotification parameter")
-		}
-
-		select {
-		case a.notificationCh <- sessionNotification:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			// Channel is full - this indicates the notification processing is falling behind
-			return ErrNotificationBufferFull
-		}
+	// Create a queued call
+	resultChan := make(chan callResult, 1)
+	qCall := &queuedCall{
+		ctx:        ctx,
+		method:     method,
+		params:     params,
+		resultChan: resultChan,
 	}
 
-	// For other notifications, we still use the direct approach
-	// TODO: Consider extending channel-based approach to all notifications if needed
+	// Queue the call
+	select {
+	case a.callQueue <- qCall:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-a.closed:
+		return ErrConnectionClosed
+	}
+
+	// Wait for result
+	select {
+	case res := <-resultChan:
+		if res.err != nil {
+			return res.err
+		}
+		// Unmarshal the result if needed
+		if result != nil && res.result != nil {
+			// Convert result via JSON marshaling
+			jsonData, err := json.Marshal(res.result)
+			if err != nil {
+				return err
+			}
+			if unmarshalErr := json.Unmarshal(jsonData, result); unmarshalErr != nil {
+				return unmarshalErr
+			}
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-a.closed:
+		return ErrConnectionClosed
+	}
+}
+
+// notify sends a JSON-RPC notification to the client.
+func (a *AgentConnection) notify(ctx context.Context, method string, params any) error {
+	if a.conn == nil {
+		return ErrConnectionClosed
+	}
+
 	return a.conn.Notify(ctx, method, params)
 }
 
 // Close closes the connection.
 func (a *AgentConnection) Close() error {
-	var err error
+	if a.conn == nil {
+		return ErrConnectionClosed
+	}
+
+	// Signal closure to queue processor
 	a.closeOnce.Do(func() {
-		a.markClosed()
-		if a.broadcast != nil {
-			_ = a.broadcast.Close()
-		}
-		err = a.conn.Close()
+		close(a.closed)
 	})
-	return err
+
+	return a.conn.Close()
 }
 
 // Wait waits for the connection to close.
 func (a *AgentConnection) Wait() error {
-	<-a.conn.DisconnectNotify()
-	return nil
+	if a.conn == nil {
+		return ErrConnectionClosed
+	}
+	return a.conn.Wait()
 }
 
 // Agent method helpers.
@@ -251,24 +310,16 @@ func (a *AgentConnection) SessionRequestPermission(
 }
 
 // SendSessionUpdate sends a session/update notification to the client.
-// This method is safe to call from within JSON-RPC handlers as it uses a channel-based
-// approach to avoid deadlocks, following the pattern from the Rust reference implementation.
 func (a *AgentConnection) SendSessionUpdate(ctx context.Context, params *api.SessionNotification) error {
 	return a.notify(ctx, api.MethodSessionUpdate, params)
 }
 
 // Subscribe creates a new receiver for observing the message stream.
-//
-// This allows observing all JSON-RPC messages flowing through the connection
-// for debugging, logging, or building development tools.
 func (a *AgentConnection) Subscribe() *StreamReceiver {
-	if a.broadcast == nil {
-		// Return a receiver that's already closed if broadcast is not available
-		ch := make(chan StreamMessage)
-		close(ch)
-		done := make(chan struct{})
-		close(done)
-		return &StreamReceiver{ch: ch, done: done}
-	}
-	return a.broadcast.Subscribe()
+	// Return a closed receiver - functionality not available in current implementation
+	ch := make(chan StreamMessage)
+	close(ch)
+	done := make(chan struct{})
+	close(done)
+	return &StreamReceiver{ch: ch, done: done}
 }

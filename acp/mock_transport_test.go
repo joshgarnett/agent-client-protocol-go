@@ -1,121 +1,72 @@
 package acp
 
 import (
-	"encoding/json"
 	"io"
-	"sync"
-
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // MockTransport provides an in-memory bidirectional transport for testing.
 type MockTransport struct {
-	clientToAgent *pipe
-	agentToClient *pipe
+	clientRWC io.ReadWriteCloser
+	agentRWC  io.ReadWriteCloser
 }
 
-// NewMockTransport creates a new mock transport with bidirectional pipes.
+// NewMockTransport creates a new mock transport using in-memory pipes.
 func NewMockTransport() *MockTransport {
+	// Pipe for client writing to agent
+	agentRead, clientWrite := io.Pipe()
+	// Pipe for agent writing to client
+	clientRead, agentWrite := io.Pipe()
+
 	return &MockTransport{
-		clientToAgent: newPipe(),
-		agentToClient: newPipe(),
+		clientRWC: &pipeReadWriteCloser{
+			reader: clientRead,
+			writer: clientWrite,
+		},
+		agentRWC: &pipeReadWriteCloser{
+			reader: agentRead,
+			writer: agentWrite,
+		},
 	}
 }
 
-// ClientStream returns the ObjectStream for the client side.
-func (m *MockTransport) ClientStream() jsonrpc2.ObjectStream {
-	return &mockObjectStream{
-		reader: m.agentToClient,
-		writer: m.clientToAgent,
-	}
+// Client returns an io.ReadWriteCloser for the client side of the transport.
+func (m *MockTransport) Client() io.ReadWriteCloser {
+	return m.clientRWC
 }
 
-// AgentStream returns the ObjectStream for the agent side.
-func (m *MockTransport) AgentStream() jsonrpc2.ObjectStream {
-	return &mockObjectStream{
-		reader: m.clientToAgent,
-		writer: m.agentToClient,
-	}
+// Agent returns an io.ReadWriteCloser for the agent side of the transport.
+func (m *MockTransport) Agent() io.ReadWriteCloser {
+	return m.agentRWC
 }
 
 // Close closes both pipes.
 func (m *MockTransport) Close() error {
-	m.clientToAgent.Close()
-	m.agentToClient.Close()
+	// Closing the ReadWriteClosers will close the underlying pipes.
+	m.clientRWC.Close()
+	m.agentRWC.Close()
 	return nil
 }
 
-// pipe is an in-memory pipe for passing objects between sides.
-type pipe struct {
-	ch     chan json.RawMessage
-	closed bool
-	mu     sync.RWMutex
+// pipeReadWriteCloser combines a reader and a writer to form a bidirectional stream.
+type pipeReadWriteCloser struct {
+	reader io.ReadCloser
+	writer io.WriteCloser
 }
 
-func newPipe() *pipe {
-	return &pipe{
-		ch: make(chan json.RawMessage, 100), // Buffered to avoid blocking
+func (prwc *pipeReadWriteCloser) Read(p []byte) (int, error) {
+	return prwc.reader.Read(p)
+}
+
+func (prwc *pipeReadWriteCloser) Write(p []byte) (int, error) {
+	return prwc.writer.Write(p)
+}
+
+func (prwc *pipeReadWriteCloser) Close() error {
+	// Closing both ends of the pipe is often necessary to unblock any readers/writers.
+	werr := prwc.writer.Close()
+	rerr := prwc.reader.Close()
+	if werr != nil {
+		return werr
 	}
-}
-
-func (p *pipe) Write(obj json.RawMessage) error {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	if p.closed {
-		return io.ErrClosedPipe
-	}
-
-	select {
-	case p.ch <- obj:
-		return nil
-	default:
-		return io.ErrShortBuffer
-	}
-}
-
-func (p *pipe) Read() (json.RawMessage, error) {
-	obj, ok := <-p.ch
-	if !ok {
-		return nil, io.EOF
-	}
-	return obj, nil
-}
-
-func (p *pipe) Close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if !p.closed {
-		p.closed = true
-		close(p.ch)
-	}
-	return nil
-}
-
-// mockObjectStream implements jsonrpc2.ObjectStream using pipes.
-type mockObjectStream struct {
-	reader *pipe
-	writer *pipe
-}
-
-func (s *mockObjectStream) WriteObject(obj interface{}) error {
-	data, err := json.Marshal(obj)
-	if err != nil {
-		return err
-	}
-	return s.writer.Write(json.RawMessage(data))
-}
-
-func (s *mockObjectStream) ReadObject(obj interface{}) error {
-	data, err := s.reader.Read()
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, obj)
-}
-
-func (s *mockObjectStream) Close() error {
-	// Don't close the pipes directly as they might be shared.
-	return nil
+	return rerr
 }

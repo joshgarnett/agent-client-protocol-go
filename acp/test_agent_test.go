@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // TestAgent implements a mock agent for testing.
@@ -120,7 +119,7 @@ func (a *TestAgent) HandleInitialize(
 	params *api.InitializeRequest,
 ) (*api.InitializeResponse, error) {
 	if a.checkShouldError("initialize") {
-		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeInitializationError), Message: "Initialization failed"}
+		return nil, &api.ACPError{Code: api.ErrorCodeInitializationError, Message: "Initialization failed"}
 	}
 
 	return &api.InitializeResponse{
@@ -132,7 +131,7 @@ func (a *TestAgent) HandleInitialize(
 
 func (a *TestAgent) HandleAuthenticate(_ context.Context, _ *api.AuthenticateRequest) error {
 	if a.checkShouldError("authenticate") {
-		return &jsonrpc2.Error{Code: int64(api.ErrorCodeUnauthorized), Message: "Authentication failed"}
+		return &api.ACPError{Code: api.ErrorCodeUnauthorized, Message: "Authentication failed"}
 	}
 
 	a.authMu.Lock()
@@ -147,7 +146,7 @@ func (a *TestAgent) HandleSessionNew(
 	params *api.NewSessionRequest,
 ) (*api.NewSessionResponse, error) {
 	if a.checkShouldError("session/new") {
-		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeInternalServerError), Message: "Session creation failed"}
+		return nil, &api.ACPError{Code: api.ErrorCodeInternalServerError, Message: "Session creation failed"}
 	}
 
 	sessionID := fmt.Sprintf("session-%d", atomic.AddInt64(&a.sessionCounter, 1))
@@ -168,7 +167,7 @@ func (a *TestAgent) HandleSessionNew(
 
 func (a *TestAgent) HandleSessionLoad(_ context.Context, params *api.LoadSessionRequest) error {
 	if a.checkShouldError("session/load") {
-		return &jsonrpc2.Error{Code: int64(api.ErrorCodeNotFound), Message: "Session not found"}
+		return &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Session not found"}
 	}
 
 	// For testing, we just verify the session exists.
@@ -185,7 +184,7 @@ func (a *TestAgent) HandleSessionLoad(_ context.Context, params *api.LoadSession
 
 func (a *TestAgent) HandleSessionPrompt(_ context.Context, params *api.PromptRequest) (*api.PromptResponse, error) {
 	if a.checkShouldError("session/prompt") {
-		return nil, &jsonrpc2.Error{Code: int64(api.ErrorCodeInternalServerError), Message: "Prompt processing failed"}
+		return nil, &api.ACPError{Code: api.ErrorCodeInternalServerError, Message: "Prompt processing failed"}
 	}
 
 	a.promptsMu.Lock()
@@ -202,7 +201,7 @@ func (a *TestAgent) HandleSessionPrompt(_ context.Context, params *api.PromptReq
 
 func (a *TestAgent) HandleSessionCancel(_ context.Context, params *api.CancelNotification) error {
 	if a.checkShouldError("session/cancel") {
-		return &jsonrpc2.Error{Code: int64(api.ErrorCodeNotFound), Message: "Session not found"}
+		return &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Session not found"}
 	}
 
 	a.cancellationsMu.Lock()

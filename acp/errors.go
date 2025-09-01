@@ -2,14 +2,12 @@ package acp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
 	"strings"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // Error wrapping utilities
@@ -88,41 +86,6 @@ func WithContext(err *api.ACPError, key string, value interface{}) *api.ACPError
 
 // Standard error conversions
 
-// FromJSONRPCError converts a JSON-RPC error to an ACP error.
-func FromJSONRPCError(rpcErr *jsonrpc2.Error) *api.ACPError {
-	if rpcErr == nil {
-		return nil
-	}
-
-	var data interface{}
-	if rpcErr.Data != nil {
-		data = *rpcErr.Data
-	}
-
-	return api.NewACPError(int(rpcErr.Code), rpcErr.Message, data)
-}
-
-// ToJSONRPCError converts an ACP error to a JSON-RPC error.
-func ToJSONRPCError(acpErr *api.ACPError) *jsonrpc2.Error {
-	if acpErr == nil {
-		return nil
-	}
-
-	var dataPtr *json.RawMessage
-	if acpErr.Data != nil {
-		if dataBytes, err := json.Marshal(acpErr.Data); err == nil {
-			rawMsg := json.RawMessage(dataBytes)
-			dataPtr = &rawMsg
-		}
-	}
-
-	return &jsonrpc2.Error{
-		Code:    int64(acpErr.Code),
-		Message: acpErr.Message,
-		Data:    dataPtr,
-	}
-}
-
 // FromStandardError converts a standard Go error to an ACP error.
 func FromStandardError(err error) *api.ACPError {
 	if err == nil {
@@ -132,12 +95,6 @@ func FromStandardError(err error) *api.ACPError {
 	// Check if it's already an ACP error
 	if acpErr, ok := AsACPError(err); ok {
 		return acpErr
-	}
-
-	// Check if it's a JSON-RPC error
-	var rpcErr *jsonrpc2.Error
-	if errors.As(err, &rpcErr) {
-		return FromJSONRPCError(rpcErr)
 	}
 
 	// Convert to internal error
@@ -154,7 +111,7 @@ func NewValidationError(field string, reason string) *api.ACPError {
 	}
 
 	message := fmt.Sprintf("Validation failed for field '%s': %s", field, reason)
-	return api.NewACPError(int(jsonrpc2.CodeInvalidParams), message, data)
+	return api.NewACPError(api.CodeInvalidParams, message, data)
 }
 
 // NewNotFoundError creates a not found error for a resource.
@@ -351,7 +308,7 @@ func IsNotFound(err error) bool {
 // IsValidationError checks if an error is a validation error.
 func IsValidationError(err error) bool {
 	acpErr, ok := AsACPError(err)
-	return ok && acpErr.Code == int(jsonrpc2.CodeInvalidParams)
+	return ok && acpErr.Code == api.CodeInvalidParams
 }
 
 // IsInternalError checks if an error is an internal server error.

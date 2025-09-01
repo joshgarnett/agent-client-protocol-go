@@ -2,8 +2,6 @@ package api
 
 import (
 	"fmt"
-
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // ACP-specific error codes (using the reserved range for application errors).
@@ -16,6 +14,15 @@ const (
 	ErrorCodeConflict            = -32005
 	ErrorCodeTooManyRequests     = -32006
 	ErrorCodeInternalServerError = -32007
+)
+
+// Standard JSON-RPC 2.0 error codes.
+const (
+	CodeParseError     = -32700
+	CodeInvalidRequest = -32600
+	CodeMethodNotFound = -32601
+	CodeInvalidParams  = -32602
+	CodeInternalError  = -32603
 )
 
 // ACPError represents an Agent Client Protocol error.
@@ -43,12 +50,12 @@ func (e ACPError) Error() string {
 
 // Common ACP errors.
 var (
-	// Standard JSON-RPC 2.0 errors (using jsonrpc2 constants).
-	ErrParseError     = ACPError{Code: int(jsonrpc2.CodeParseError), Message: "Parse error"}
-	ErrInvalidRequest = ACPError{Code: int(jsonrpc2.CodeInvalidRequest), Message: "Invalid request"}
-	ErrMethodNotFound = ACPError{Code: int(jsonrpc2.CodeMethodNotFound), Message: "Method not found"}
-	ErrInvalidParams  = ACPError{Code: int(jsonrpc2.CodeInvalidParams), Message: "Invalid params"}
-	ErrInternalError  = ACPError{Code: int(jsonrpc2.CodeInternalError), Message: "Internal error"}
+	// Standard JSON-RPC 2.0 errors.
+	ErrParseError     = ACPError{Code: CodeParseError, Message: "Parse error"}
+	ErrInvalidRequest = ACPError{Code: CodeInvalidRequest, Message: "Invalid request"}
+	ErrMethodNotFound = ACPError{Code: CodeMethodNotFound, Message: "Method not found"}
+	ErrInvalidParams  = ACPError{Code: CodeInvalidParams, Message: "Invalid params"}
+	ErrInternalError  = ACPError{Code: CodeInternalError, Message: "Internal error"}
 
 	// ACP-specific errors.
 	ErrAuthRequired        = ACPError{Code: ErrorCodeAuthRequired, Message: "Authentication required"}
