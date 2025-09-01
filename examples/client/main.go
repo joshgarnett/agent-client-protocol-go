@@ -10,12 +10,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp"
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
 )
 
-const minRequiredArgs = 2
+const (
+	minRequiredArgs = 2
+	defaultTimeout  = 30 * time.Second
+)
 
 // stdioReadWriteCloser combines stdin and stdout into a ReadWriteCloser.
 type stdioReadWriteCloser struct {
@@ -125,7 +129,7 @@ func runClient() error {
 	if err != nil {
 		return fmt.Errorf("failed to setup agent: %w", err)
 	}
-	conn, err := acp.NewClientConnectionStdio(ctx, stdio, registry)
+	conn, err := acp.NewClientConnectionStdio(ctx, stdio, registry, defaultTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to create client connection: %w", err)
 	}

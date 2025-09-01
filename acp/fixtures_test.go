@@ -52,7 +52,7 @@ func NewConnectionPair(t *testing.T) *ConnectionPair {
 	ctx := context.Background()
 
 	// The "agent side" connection - receives calls to agent methods, can send calls to client methods.
-	agentSideConn, err := NewClientConnectionStdio(ctx, transport.Agent(), agentHandler)
+	agentSideConn, err := NewClientConnectionStdio(ctx, transport.Agent(), agentHandler, testRequestTimeout)
 	if err != nil {
 		t.Fatalf("Failed to create agent side connection: %v", err)
 	}
