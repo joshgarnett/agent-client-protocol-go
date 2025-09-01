@@ -72,7 +72,7 @@ func TestToolCallBuilder(t *testing.T) {
 
 		location := api.ToolCallLocation{
 			Path: "/path/to/file.go",
-			Line: intPtr(42),
+			Line: IntPtr(42),
 		}
 
 		builder.WithLocation(location)
@@ -87,8 +87,8 @@ func TestToolCallBuilder(t *testing.T) {
 		builder := NewToolCall("tool-123", "Test Tool")
 
 		locations := []api.ToolCallLocation{
-			{Path: "/file1.go", Line: intPtr(10)},
-			{Path: "/file2.go", Line: intPtr(20)},
+			{Path: "/file1.go", Line: IntPtr(10)},
+			{Path: "/file2.go", Line: IntPtr(20)},
 			{Path: "/file3.go"},
 		}
 
@@ -165,7 +165,7 @@ func TestToolCallUpdateBuilder(t *testing.T) {
 
 		locations := []api.ToolCallLocation{
 			{Path: "/updated/file1.go"},
-			{Path: "/updated/file2.go", Line: intPtr(100)},
+			{Path: "/updated/file2.go", Line: IntPtr(100)},
 		}
 
 		builder.WithLocations(locations)
@@ -422,9 +422,4 @@ func TestToolCallProgress(t *testing.T) {
 		assert.Equal(t, 100, progress.Total)
 		assert.Equal(t, "Processing files", progress.Message)
 	})
-}
-
-// Helper function for tests.
-func intPtr(i int) *int {
-	return &i
 }

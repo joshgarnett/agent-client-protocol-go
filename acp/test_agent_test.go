@@ -56,7 +56,7 @@ func NewTestAgent() *TestAgent {
 			{
 				Id:          api.AuthMethodId("test-auth"),
 				Name:        "Test Authentication",
-				Description: stringPtr("Test authentication method"),
+				Description: StringPtr("Test authentication method"),
 			},
 		},
 	}
@@ -216,8 +216,4 @@ func (a *TestAgent) IsAuthenticated() bool {
 	a.authMu.RLock()
 	defer a.authMu.RUnlock()
 	return a.authenticated
-}
-
-func stringPtr(s string) *string {
-	return &s
 }
