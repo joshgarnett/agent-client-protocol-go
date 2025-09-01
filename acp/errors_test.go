@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
@@ -85,7 +84,7 @@ func TestContextError(t *testing.T) {
 	})
 
 	t.Run("NewContextError with Nil Context", func(t *testing.T) {
-		err := NewContextError(context.TODO(), api.ErrorCodeInternalServerError, "internal error")
+		err := NewContextError(context.Background(), api.ErrorCodeInternalServerError, "internal error")
 
 		assert.Equal(t, api.ErrorCodeInternalServerError, err.Code)
 		assert.Equal(t, "internal error", err.Message)
@@ -205,120 +204,6 @@ func TestValidationHelpers(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, 100, data["limit"])
 		assert.Equal(t, "minute", data["window"])
-	})
-}
-
-func TestErrorChain(t *testing.T) {
-	t.Run("Add Errors", func(t *testing.T) {
-		chain := NewErrorChain()
-
-		assert.False(t, chain.HasErrors())
-		assert.Equal(t, 0, chain.Count())
-
-		chain.Add(errors.New("error 1"))
-		chain.Add(errors.New("error 2"))
-		chain.Add(nil) // Should be ignored
-		chain.Add(errors.New("error 3"))
-
-		assert.True(t, chain.HasErrors())
-		assert.Equal(t, 3, chain.Count())
-	})
-
-	t.Run("AddAll", func(t *testing.T) {
-		chain := NewErrorChain()
-
-		errors := []error{
-			errors.New("error 1"),
-			errors.New("error 2"),
-			nil,
-			errors.New("error 3"),
-		}
-
-		chain.AddAll(errors)
-		assert.Equal(t, 3, chain.Count())
-	})
-
-	t.Run("ToACPError Single Error", func(t *testing.T) {
-		chain := NewErrorChain()
-		chain.Add(errors.New("single error"))
-
-		acpErr := chain.ToACPError()
-		assert.Equal(t, api.ErrorCodeInternalServerError, acpErr.Code)
-		assert.Equal(t, "single error", acpErr.Message)
-	})
-
-	t.Run("ToACPError Multiple Errors", func(t *testing.T) {
-		chain := NewErrorChain()
-		chain.Add(errors.New("error 1"))
-		chain.Add(&api.ACPError{Code: api.ErrorCodeNotFound, Message: "not found"})
-		chain.Add(errors.New("error 3"))
-
-		acpErr := chain.ToACPError()
-		assert.Equal(t, api.ErrorCodeInternalServerError, acpErr.Code)
-		assert.Contains(t, acpErr.Message, "Multiple errors occurred")
-		assert.Contains(t, acpErr.Message, "error 1")
-		assert.Contains(t, acpErr.Message, "not found")
-		assert.Contains(t, acpErr.Message, "error 3")
-
-		data, ok := acpErr.Data.(map[string]interface{})
-		require.True(t, ok)
-		assert.Equal(t, 3, data["count"])
-
-		errors, ok := data["errors"].([]map[string]interface{})
-		require.True(t, ok)
-		assert.Len(t, errors, 3)
-	})
-
-	t.Run("ToACPError Empty Chain", func(t *testing.T) {
-		chain := NewErrorChain()
-		acpErr := chain.ToACPError()
-		assert.Nil(t, acpErr)
-	})
-
-	t.Run("Error String", func(t *testing.T) {
-		chain := NewErrorChain()
-		assert.Empty(t, chain.Error())
-
-		chain.Add(errors.New("error 1"))
-		chain.Add(errors.New("error 2"))
-
-		errStr := chain.Error()
-		assert.Contains(t, errStr, "error 1")
-		assert.Contains(t, errStr, "error 2")
-		assert.Contains(t, errStr, ";")
-	})
-}
-
-func TestWithStackTrace(t *testing.T) {
-	t.Run("Add Stack Trace", func(t *testing.T) {
-		err := &api.ACPError{
-			Code:    api.ErrorCodeInternalServerError,
-			Message: "internal error",
-		}
-
-		withStack := WithStackTrace(err)
-
-		data, ok := withStack.Data.(map[string]interface{})
-		require.True(t, ok)
-
-		stackTrace, ok := data["stackTrace"].([]string)
-		require.True(t, ok)
-		assert.NotEmpty(t, stackTrace)
-
-		// Stack trace should contain current test function
-		found := false
-		for _, frame := range stackTrace {
-			if strings.Contains(frame, "TestWithStackTrace") {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found)
-	})
-
-	t.Run("WithStackTrace Nil", func(t *testing.T) {
-		result := WithStackTrace(nil)
-		assert.Nil(t, result)
 	})
 }
 

@@ -67,13 +67,13 @@ type AgentConnection struct {
 // associate the user-provided handler with the connection.
 type binder struct {
 	handler Handler
+	agent   *AgentConnection
 }
 
 // Bind is called by the jsonrpc2 library to bind the handler to the connection.
 func (b *binder) Bind(_ context.Context, _ *jsonrpc2.Connection) (jsonrpc2.ConnectionOptions, error) {
 	wrappedHandler := func(ctx context.Context, req *jsonrpc2.Request) (interface{}, error) {
-		// TODO: Pass actual connection reference instead of nil
-		return b.handler.Handle(ctx, nil, req)
+		return b.handler.Handle(ctx, b.agent, req)
 	}
 
 	return jsonrpc2.ConnectionOptions{
@@ -106,6 +106,7 @@ func NewAgentConnectionStdio(
 
 	b := &binder{
 		handler: handler,
+		agent:   ac,
 	}
 
 	// Create the connection using our custom dialer.

@@ -1,7 +1,6 @@
 package acp
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -293,126 +292,6 @@ func (sm *SessionManager) CleanupInactiveSessions(inactiveDuration time.Duration
 	}
 
 	return cleaned
-}
-
-// Session persistence interfaces
-
-// SessionStore defines the interface for session persistence.
-type SessionStore interface {
-	// Save persists a session state.
-	Save(session *SessionState) error
-	// Load retrieves a session state by ID.
-	Load(id api.SessionId) (*SessionState, error)
-	// Delete removes a session from storage.
-	Delete(id api.SessionId) error
-	// List returns all stored sessions.
-	List() ([]*SessionState, error)
-	// Exists checks if a session exists in storage.
-	Exists(id api.SessionId) (bool, error)
-}
-
-// MemorySessionStore provides in-memory session storage.
-type MemorySessionStore struct {
-	sessions *util.SyncMap[api.SessionId, *SessionState]
-}
-
-// NewMemorySessionStore creates a new in-memory session store.
-func NewMemorySessionStore() *MemorySessionStore {
-	return &MemorySessionStore{
-		sessions: util.NewSyncMap[api.SessionId, *SessionState](),
-	}
-}
-
-// Save stores a session in memory.
-func (m *MemorySessionStore) Save(session *SessionState) error {
-	if session == nil {
-		return errors.New("session cannot be nil")
-	}
-
-	// Create a copy to avoid external mutations
-	sessionCopy := &SessionState{
-		ID:         session.ID,
-		CreatedAt:  session.CreatedAt,
-		LastActive: util.NewAtomicValue(session.LastActive.Load()),
-		Status:     util.NewAtomicValue(session.Status.Load()),
-		Metadata:   util.NewSyncMap[string, interface{}](),
-	}
-
-	// Copy metadata
-	metadataMap := session.Metadata.GetAll()
-	for k, v := range metadataMap {
-		sessionCopy.Metadata.Store(k, v)
-	}
-
-	m.sessions.Store(session.ID, sessionCopy)
-	return nil
-}
-
-// Load retrieves a session from memory.
-func (m *MemorySessionStore) Load(id api.SessionId) (*SessionState, error) {
-	session, exists := m.sessions.Load(id)
-	if !exists {
-		return nil, fmt.Errorf("session %v not found", id)
-	}
-
-	// Return a copy to avoid external mutations
-	sessionCopy := &SessionState{
-		ID:         session.ID,
-		CreatedAt:  session.CreatedAt,
-		LastActive: util.NewAtomicValue(session.LastActive.Load()),
-		Status:     util.NewAtomicValue(session.Status.Load()),
-		Metadata:   util.NewSyncMap[string, interface{}](),
-	}
-
-	// Copy metadata
-	metadataMap := session.Metadata.GetAll()
-	for k, v := range metadataMap {
-		sessionCopy.Metadata.Store(k, v)
-	}
-
-	return sessionCopy, nil
-}
-
-// Delete removes a session from memory.
-func (m *MemorySessionStore) Delete(id api.SessionId) error {
-	_, exists := m.sessions.LoadAndDelete(id)
-	if !exists {
-		return fmt.Errorf("session %v not found", id)
-	}
-	return nil
-}
-
-// List returns all sessions from memory.
-func (m *MemorySessionStore) List() ([]*SessionState, error) {
-	sessionMap := m.sessions.GetAll()
-	sessions := make([]*SessionState, 0, len(sessionMap))
-
-	for _, session := range sessionMap {
-		// Return copies to avoid external mutations
-		sessionCopy := &SessionState{
-			ID:         session.ID,
-			CreatedAt:  session.CreatedAt,
-			LastActive: util.NewAtomicValue(session.LastActive.Load()),
-			Status:     util.NewAtomicValue(session.Status.Load()),
-			Metadata:   util.NewSyncMap[string, interface{}](),
-		}
-
-		// Copy metadata
-		metadataMap := session.Metadata.GetAll()
-		for k, v := range metadataMap {
-			sessionCopy.Metadata.Store(k, v)
-		}
-
-		sessions = append(sessions, sessionCopy)
-	}
-
-	return sessions, nil
-}
-
-// Exists checks if a session exists in memory.
-func (m *MemorySessionStore) Exists(id api.SessionId) (bool, error) {
-	_, exists := m.sessions.Load(id)
-	return exists, nil
 }
 
 // Enhanced connection state management

@@ -196,40 +196,6 @@ func (c *ClientConnection) CreateTerminalWithHandle(ctx context.Context,
 	return NewTerminalHandle(response.TerminalId, params.SessionId, c), nil
 }
 
-// Terminal workflow helpers
-
-// TerminalWorkflow provides a high-level interface for common terminal operations.
-type TerminalWorkflow struct {
-	handle *TerminalHandle
-}
-
-// NewTerminalWorkflow creates a new terminal workflow wrapper.
-func NewTerminalWorkflow(handle *TerminalHandle) *TerminalWorkflow {
-	return &TerminalWorkflow{handle: handle}
-}
-
-// Execute runs a command in the terminal and waits for completion.
-//
-// This is a convenience method that combines output monitoring and exit waiting.
-func (tw *TerminalWorkflow) Execute(ctx context.Context, _ string) (*api.WaitForTerminalExitResponse, error) {
-	if tw.handle.IsReleased() {
-		return nil, errors.New("terminal handle has been released")
-	}
-
-	// Send command to terminal (this would typically be done through a separate mechanism)
-	// For now, we just wait for the terminal to complete
-	return tw.handle.WaitForExit(ctx)
-}
-
-// GetOutputAndRelease gets the current output and then releases the terminal.
-//
-// This is a convenience method for one-shot terminal operations.
-func (tw *TerminalWorkflow) GetOutputAndRelease(ctx context.Context) error {
-	defer tw.handle.Close()
-
-	return tw.handle.CurrentOutput(ctx)
-}
-
 // Session integration
 
 // SessionTerminalManager integrates terminal management with session lifecycle.
