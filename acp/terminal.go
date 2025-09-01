@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"sync/atomic"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+	"github.com/joshgarnett/agent-client-protocol-go/util"
 )
 
 // TerminalHandle provides a high-level abstraction for terminal management with lifecycle handling.
@@ -17,8 +18,7 @@ type TerminalHandle struct {
 	ID        string
 	sessionID api.SessionId
 	conn      *ClientConnection
-	mu        sync.RWMutex
-	released  bool
+	released  atomic.Bool
 }
 
 // NewTerminalHandle creates a new terminal handle.
@@ -34,11 +34,7 @@ func NewTerminalHandle(id string, sessionID api.SessionId, conn *ClientConnectio
 //
 // Returns an error if the terminal handle has been released.
 func (th *TerminalHandle) CurrentOutput(ctx context.Context) error {
-	th.mu.RLock()
-	released := th.released
-	th.mu.RUnlock()
-
-	if released {
+	if th.released.Load() {
 		return errors.New("terminal handle has been released")
 	}
 
@@ -52,11 +48,7 @@ func (th *TerminalHandle) CurrentOutput(ctx context.Context) error {
 //
 // Returns an error if the terminal handle has been released.
 func (th *TerminalHandle) WaitForExit(ctx context.Context) (*api.WaitForTerminalExitResponse, error) {
-	th.mu.RLock()
-	released := th.released
-	th.mu.RUnlock()
-
-	if released {
+	if th.released.Load() {
 		return nil, errors.New("terminal handle has been released")
 	}
 
@@ -70,10 +62,8 @@ func (th *TerminalHandle) WaitForExit(ctx context.Context) (*api.WaitForTerminal
 //
 // This method is idempotent - calling it multiple times is safe.
 func (th *TerminalHandle) Release(ctx context.Context) error {
-	th.mu.Lock()
-	defer th.mu.Unlock()
-
-	if th.released {
+	// Use CompareAndSwap to ensure we only release once
+	if !th.released.CompareAndSwap(false, true) {
 		return nil // Already released
 	}
 
@@ -82,7 +72,6 @@ func (th *TerminalHandle) Release(ctx context.Context) error {
 		TerminalId: th.ID,
 	})
 
-	th.released = true
 	return err
 }
 
@@ -95,9 +84,7 @@ func (th *TerminalHandle) Close() error {
 
 // IsReleased returns true if the terminal handle has been released.
 func (th *TerminalHandle) IsReleased() bool {
-	th.mu.RLock()
-	defer th.mu.RUnlock()
-	return th.released
+	return th.released.Load()
 }
 
 // TerminalManager manages the lifecycle of multiple terminals within a session.
@@ -105,8 +92,7 @@ func (th *TerminalHandle) IsReleased() bool {
 // This provides centralized management and cleanup of terminal handles,
 // ensuring proper resource cleanup when sessions end.
 type TerminalManager struct {
-	terminals map[string]*TerminalHandle
-	mu        sync.RWMutex
+	terminals *util.SyncMap[string, *TerminalHandle]
 	sessionID api.SessionId
 	conn      *ClientConnection
 }
@@ -114,7 +100,7 @@ type TerminalManager struct {
 // NewTerminalManager creates a new terminal manager for the given session.
 func NewTerminalManager(sessionID api.SessionId, conn *ClientConnection) *TerminalManager {
 	return &TerminalManager{
-		terminals: make(map[string]*TerminalHandle),
+		terminals: util.NewSyncMap[string, *TerminalHandle](),
 		sessionID: sessionID,
 		conn:      conn,
 	}
@@ -135,28 +121,21 @@ func (tm *TerminalManager) CreateTerminal(ctx context.Context,
 
 	handle := NewTerminalHandle(response.TerminalId, tm.sessionID, tm.conn)
 
-	tm.mu.Lock()
-	tm.terminals[response.TerminalId] = handle
-	tm.mu.Unlock()
+	tm.terminals.Store(response.TerminalId, handle)
 
 	return handle, nil
 }
 
 // GetTerminal retrieves a terminal handle by ID.
 func (tm *TerminalManager) GetTerminal(id string) (*TerminalHandle, bool) {
-	tm.mu.RLock()
-	defer tm.mu.RUnlock()
-	handle, exists := tm.terminals[id]
-	return handle, exists
+	return tm.terminals.Load(id)
 }
 
 // ListTerminals returns all terminal handles.
 func (tm *TerminalManager) ListTerminals() []*TerminalHandle {
-	tm.mu.RLock()
-	defer tm.mu.RUnlock()
-
-	handles := make([]*TerminalHandle, 0, len(tm.terminals))
-	for _, handle := range tm.terminals {
+	terminalMap := tm.terminals.GetAll()
+	handles := make([]*TerminalHandle, 0, len(terminalMap))
+	for _, handle := range terminalMap {
 		handles = append(handles, handle)
 	}
 	return handles
@@ -164,13 +143,7 @@ func (tm *TerminalManager) ListTerminals() []*TerminalHandle {
 
 // ReleaseTerminal releases a specific terminal by ID.
 func (tm *TerminalManager) ReleaseTerminal(ctx context.Context, id string) error {
-	tm.mu.Lock()
-	handle, exists := tm.terminals[id]
-	if exists {
-		delete(tm.terminals, id)
-	}
-	tm.mu.Unlock()
-
+	handle, exists := tm.terminals.LoadAndDelete(id)
 	if !exists {
 		return fmt.Errorf("terminal with ID %q not found", id)
 	}
@@ -182,13 +155,12 @@ func (tm *TerminalManager) ReleaseTerminal(ctx context.Context, id string) error
 //
 // This is typically called when a session ends to ensure proper cleanup.
 func (tm *TerminalManager) ReleaseAll(ctx context.Context) error {
-	tm.mu.Lock()
-	terminals := make([]*TerminalHandle, 0, len(tm.terminals))
-	for _, handle := range tm.terminals {
+	terminalMap := tm.terminals.GetAll()
+	terminals := make([]*TerminalHandle, 0, len(terminalMap))
+	for _, handle := range terminalMap {
 		terminals = append(terminals, handle)
 	}
-	tm.terminals = make(map[string]*TerminalHandle) // Clear all
-	tm.mu.Unlock()
+	tm.terminals.Clear() // Clear all
 
 	var errors []error
 	for _, handle := range terminals {
@@ -205,9 +177,7 @@ func (tm *TerminalManager) ReleaseAll(ctx context.Context) error {
 
 // Count returns the number of active terminals.
 func (tm *TerminalManager) Count() int {
-	tm.mu.RLock()
-	defer tm.mu.RUnlock()
-	return len(tm.terminals)
+	return tm.terminals.Count()
 }
 
 // Enhanced ClientConnection methods
@@ -264,41 +234,28 @@ func (tw *TerminalWorkflow) GetOutputAndRelease(ctx context.Context) error {
 
 // SessionTerminalManager integrates terminal management with session lifecycle.
 type SessionTerminalManager struct {
-	managers map[api.SessionId]*TerminalManager
-	mu       sync.RWMutex
+	managers *util.SyncMap[api.SessionId, *TerminalManager]
 	conn     *ClientConnection
 }
 
 // NewSessionTerminalManager creates a new session-level terminal manager.
 func NewSessionTerminalManager(conn *ClientConnection) *SessionTerminalManager {
 	return &SessionTerminalManager{
-		managers: make(map[api.SessionId]*TerminalManager),
+		managers: util.NewSyncMap[api.SessionId, *TerminalManager](),
 		conn:     conn,
 	}
 }
 
 // GetManager returns the terminal manager for a specific session.
 func (stm *SessionTerminalManager) GetManager(sessionID api.SessionId) *TerminalManager {
-	stm.mu.Lock()
-	defer stm.mu.Unlock()
-
-	manager, exists := stm.managers[sessionID]
-	if !exists {
-		manager = NewTerminalManager(sessionID, stm.conn)
-		stm.managers[sessionID] = manager
-	}
-	return manager
+	manager := NewTerminalManager(sessionID, stm.conn)
+	actual, _ := stm.managers.LoadOrStore(sessionID, manager)
+	return actual
 }
 
 // ReleaseSession releases all terminals for a specific session.
 func (stm *SessionTerminalManager) ReleaseSession(ctx context.Context, sessionID api.SessionId) error {
-	stm.mu.Lock()
-	manager, exists := stm.managers[sessionID]
-	if exists {
-		delete(stm.managers, sessionID)
-	}
-	stm.mu.Unlock()
-
+	manager, exists := stm.managers.LoadAndDelete(sessionID)
 	if exists {
 		return manager.ReleaseAll(ctx)
 	}
@@ -307,13 +264,12 @@ func (stm *SessionTerminalManager) ReleaseSession(ctx context.Context, sessionID
 
 // ReleaseAll releases all terminals across all sessions.
 func (stm *SessionTerminalManager) ReleaseAll(ctx context.Context) error {
-	stm.mu.Lock()
-	managers := make([]*TerminalManager, 0, len(stm.managers))
-	for _, manager := range stm.managers {
+	managerMap := stm.managers.GetAll()
+	managers := make([]*TerminalManager, 0, len(managerMap))
+	for _, manager := range managerMap {
 		managers = append(managers, manager)
 	}
-	stm.managers = make(map[api.SessionId]*TerminalManager)
-	stm.mu.Unlock()
+	stm.managers.Clear()
 
 	var errors []error
 	for _, manager := range managers {
@@ -330,11 +286,9 @@ func (stm *SessionTerminalManager) ReleaseAll(ctx context.Context) error {
 
 // ActiveSessions returns the session IDs that have active terminals.
 func (stm *SessionTerminalManager) ActiveSessions() []api.SessionId {
-	stm.mu.RLock()
-	defer stm.mu.RUnlock()
-
-	sessions := make([]api.SessionId, 0, len(stm.managers))
-	for sessionID := range stm.managers {
+	managerMap := stm.managers.GetAll()
+	sessions := make([]api.SessionId, 0, len(managerMap))
+	for sessionID := range managerMap {
 		sessions = append(sessions, sessionID)
 	}
 	return sessions

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/joshgarnett/agent-client-protocol-go/util"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -26,19 +26,17 @@ type RPCConnection struct {
 	conn *jsonrpc2.Conn
 
 	// Request/response tracking
-	pendingRequests map[interface{}]chan *ResponseResult
-	pendingMu       sync.RWMutex
+	pendingRequests *util.SyncMap[int64, chan *ResponseResult]
 	nextID          int64
 
 	// Stream broadcasting
 	broadcast *StreamBroadcast
 
 	// Configuration
-	defaultTimeout time.Duration
+	defaultTimeout *util.AtomicValue[time.Duration]
 
 	// Cleanup
-	closed bool
-	mu     sync.RWMutex
+	closed atomic.Bool
 }
 
 // ResponseResult holds the result of an RPC request.
@@ -71,9 +69,9 @@ func NewRPCConnection(conn *jsonrpc2.Conn, config *RPCConnectionConfig) *RPCConn
 
 	rpc := &RPCConnection{
 		conn:            conn,
-		pendingRequests: make(map[interface{}]chan *ResponseResult),
+		pendingRequests: util.NewSyncMap[int64, chan *ResponseResult](),
 		broadcast:       broadcast,
-		defaultTimeout:  config.DefaultTimeout,
+		defaultTimeout:  util.NewAtomicValue(config.DefaultTimeout),
 	}
 
 	return rpc
@@ -81,18 +79,15 @@ func NewRPCConnection(conn *jsonrpc2.Conn, config *RPCConnectionConfig) *RPCConn
 
 // Call makes an RPC call with optional timeout.
 func (r *RPCConnection) Call(ctx context.Context, method string, params, result interface{}) error {
-	return r.CallWithTimeout(ctx, method, params, result, r.defaultTimeout)
+	return r.CallWithTimeout(ctx, method, params, result, r.defaultTimeout.Load())
 }
 
 // CallWithTimeout makes an RPC call with a specific timeout.
 func (r *RPCConnection) CallWithTimeout(ctx context.Context, method string, params,
 	result interface{}, timeout time.Duration) error {
-	r.mu.RLock()
-	if r.closed {
-		r.mu.RUnlock()
+	if r.closed.Load() {
 		return errors.New("connection is closed")
 	}
-	r.mu.RUnlock()
 
 	// Generate unique request ID
 	id := atomic.AddInt64(&r.nextID, 1)
@@ -122,16 +117,12 @@ func (r *RPCConnection) CallWithTimeout(ctx context.Context, method string, para
 
 	// Set up response channel
 	respCh := make(chan *ResponseResult, 1)
-	r.pendingMu.Lock()
-	r.pendingRequests[id] = respCh
-	r.pendingMu.Unlock()
+	r.pendingRequests.Store(id, respCh)
 
 	// Cleanup on return
 	defer func() {
-		r.pendingMu.Lock()
-		delete(r.pendingRequests, id)
+		r.pendingRequests.Delete(id)
 		close(respCh)
-		r.pendingMu.Unlock()
 	}()
 
 	// Make the actual call
@@ -188,12 +179,9 @@ func (r *RPCConnection) convertToStreamError(err error) *StreamError {
 
 // Notify sends an RPC notification.
 func (r *RPCConnection) Notify(ctx context.Context, method string, params interface{}) error {
-	r.mu.RLock()
-	if r.closed {
-		r.mu.RUnlock()
+	if r.closed.Load() {
 		return errors.New("connection is closed")
 	}
-	r.mu.RUnlock()
 
 	// Serialize parameters for broadcasting
 	var paramsRaw json.RawMessage
@@ -229,24 +217,20 @@ func (r *RPCConnection) Subscribe() *StreamReceiver {
 
 // Close closes the RPC connection.
 func (r *RPCConnection) Close() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.closed {
+	// Use CompareAndSwap to ensure we only close once
+	if !r.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	r.closed = true
 
 	// Cancel all pending requests
-	r.pendingMu.Lock()
-	for _, ch := range r.pendingRequests {
+	pendingMap := r.pendingRequests.GetAll()
+	for _, ch := range pendingMap {
 		select {
 		case ch <- &ResponseResult{Error: &jsonrpc2.Error{Code: -32000, Message: "Connection closed"}}:
 		default:
 		}
 	}
-	r.pendingRequests = make(map[interface{}]chan *ResponseResult)
-	r.pendingMu.Unlock()
+	r.pendingRequests.Clear()
 
 	// Close broadcast
 	if r.broadcast != nil {
@@ -270,23 +254,17 @@ func (r *RPCConnection) Underlying() *jsonrpc2.Conn {
 
 // PendingRequestCount returns the number of pending requests.
 func (r *RPCConnection) PendingRequestCount() int {
-	r.pendingMu.RLock()
-	defer r.pendingMu.RUnlock()
-	return len(r.pendingRequests)
+	return r.pendingRequests.Count()
 }
 
 // SetDefaultTimeout sets the default timeout for requests.
 func (r *RPCConnection) SetDefaultTimeout(timeout time.Duration) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.defaultTimeout = timeout
+	r.defaultTimeout.Store(timeout)
 }
 
 // GetDefaultTimeout returns the current default timeout.
 func (r *RPCConnection) GetDefaultTimeout() time.Duration {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.defaultTimeout
+	return r.defaultTimeout.Load()
 }
 
 // InterceptedHandler wraps a jsonrpc2 handler to intercept messages for stream broadcasting.

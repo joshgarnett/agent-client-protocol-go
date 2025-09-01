@@ -1,4 +1,4 @@
-.PHONY: setup fetch-schema generate build test lint clean examples
+.PHONY: setup fetch-schema generate build test lint clean examples run-examples
 
 # Install required tools and dependencies
 setup:
@@ -52,3 +52,7 @@ check: test fmt vet lint
 examples: build
 	go build -o bin/example-agent ./examples/agent
 	go build -o bin/example-client ./examples/client
+
+# Run examples with test script
+run-examples: examples
+	./run_examples.sh

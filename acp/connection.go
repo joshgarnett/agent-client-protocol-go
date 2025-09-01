@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/joshgarnett/agent-client-protocol-go/util"
 )
 
 const (
@@ -53,6 +55,46 @@ func (ce ConnectionEvent) String() string {
 	}
 }
 
+type ConnectionStateTracker struct {
+	state                ConnectionState
+	stateChangeCallbacks []StateChangeCallback
+	mu                   sync.RWMutex
+}
+
+func NewConnectionStateTracker() *ConnectionStateTracker {
+	return &ConnectionStateTracker{
+		state: StateUninitialized,
+	}
+}
+
+func (c *ConnectionStateTracker) GetState() ConnectionState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.state
+}
+
+func (c *ConnectionStateTracker) SetState(state ConnectionState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.state = state
+}
+
+func (c *ConnectionStateTracker) GetStateAndCallbacks() (ConnectionState, []StateChangeCallback) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.state, c.stateChangeCallbacks
+}
+
+func (c *ConnectionStateTracker) OnStateChange(callback StateChangeCallback) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.stateChangeCallbacks == nil {
+		c.stateChangeCallbacks = make([]StateChangeCallback, 0)
+	}
+	c.stateChangeCallbacks = append(c.stateChangeCallbacks, callback)
+}
+
 // ConnectionEventData contains data associated with a connection event.
 type ConnectionEventData struct {
 	Event     ConnectionEvent
@@ -70,16 +112,13 @@ type ManagedConnection struct {
 	underlying interface{}
 
 	// Connection state
-	state   ConnectionState
-	stateMu sync.RWMutex
+	state *util.AtomicValue[ConnectionState]
 
 	// Event handlers
-	handlers   []ConnectionEventHandler
-	handlersMu sync.RWMutex
+	handlers *util.CallbackRegistry[ConnectionEventHandler]
 
 	// Reconnection settings
-	reconnectConfig *ReconnectConfig
-	reconnectMu     sync.RWMutex
+	reconnectConfig *util.AtomicValue[*ReconnectConfig]
 
 	// Graceful shutdown
 	shutdownTimeout time.Duration
@@ -141,8 +180,9 @@ func NewManagedConnection(conn interface{}) (*ManagedConnection, error) {
 
 	mc := &ManagedConnection{
 		underlying:      conn,
-		state:           StateUninitialized,
-		handlers:        make([]ConnectionEventHandler, 0),
+		state:           util.NewAtomicValue(StateUninitialized),
+		handlers:        util.NewCallbackRegistry[ConnectionEventHandler](),
+		reconnectConfig: &util.AtomicValue[*ReconnectConfig]{},
 		shutdownTimeout: defaultShutdownTimeoutSec * time.Second,
 		shutdownCh:      make(chan struct{}),
 		connectedAt:     time.Now(),
@@ -161,24 +201,20 @@ func NewManagedConnection(conn interface{}) (*ManagedConnection, error) {
 
 // OnEvent registers an event handler.
 func (mc *ManagedConnection) OnEvent(handler ConnectionEventHandler) {
-	mc.handlersMu.Lock()
-	defer mc.handlersMu.Unlock()
-	mc.handlers = append(mc.handlers, handler)
+	mc.handlers.Register(handler)
 }
 
 // RemoveAllEventHandlers removes all event handlers.
 func (mc *ManagedConnection) RemoveAllEventHandlers() {
-	mc.handlersMu.Lock()
-	defer mc.handlersMu.Unlock()
-	mc.handlers = make([]ConnectionEventHandler, 0)
+	mc.handlers.Clear()
 }
 
 // emitEvent emits an event to all registered handlers.
 func (mc *ManagedConnection) emitEvent(event ConnectionEvent, data interface{}) {
-	mc.handlersMu.RLock()
-	handlers := make([]ConnectionEventHandler, len(mc.handlers))
-	copy(handlers, mc.handlers)
-	mc.handlersMu.RUnlock()
+	handlers := mc.handlers.GetAll()
+	if handlers == nil {
+		return
+	}
 
 	eventData := ConnectionEventData{
 		Event:     event,
@@ -215,17 +251,12 @@ func (mc *ManagedConnection) emitEvent(event ConnectionEvent, data interface{}) 
 
 // GetState returns the current connection state.
 func (mc *ManagedConnection) GetState() ConnectionState {
-	mc.stateMu.RLock()
-	defer mc.stateMu.RUnlock()
-	return mc.state
+	return mc.state.Load()
 }
 
 // SetState sets the connection state.
 func (mc *ManagedConnection) SetState(state ConnectionState) {
-	mc.stateMu.Lock()
-	oldState := mc.state
-	mc.state = state
-	mc.stateMu.Unlock()
+	oldState := mc.state.Swap(state)
 
 	if oldState != state {
 		mc.emitEvent(ConnectionEventStateChanged, map[string]interface{}{
@@ -245,20 +276,15 @@ func (mc *ManagedConnection) IsConnected() bool {
 
 // EnableReconnect enables automatic reconnection with the given configuration.
 func (mc *ManagedConnection) EnableReconnect(config *ReconnectConfig) {
-	mc.reconnectMu.Lock()
-	defer mc.reconnectMu.Unlock()
-
 	if config == nil {
 		config = DefaultReconnectConfig()
 	}
-	mc.reconnectConfig = config
+	mc.reconnectConfig.Store(config)
 }
 
 // DisableReconnect disables automatic reconnection.
 func (mc *ManagedConnection) DisableReconnect() {
-	mc.reconnectMu.Lock()
-	defer mc.reconnectMu.Unlock()
-	mc.reconnectConfig = nil
+	mc.reconnectConfig.Store(nil)
 }
 
 // Graceful shutdown
@@ -379,8 +405,7 @@ func (mc *ManagedConnection) GetTerminalManager() *SessionTerminalManager {
 
 // ConnectionPool manages multiple connections.
 type ConnectionPool struct {
-	connections map[string]*ManagedConnection
-	mu          sync.RWMutex
+	connections *util.SyncMap[string, *ManagedConnection]
 	maxSize     int
 
 	// Metrics
@@ -391,44 +416,36 @@ type ConnectionPool struct {
 // NewConnectionPool creates a new connection pool.
 func NewConnectionPool(maxSize int) *ConnectionPool {
 	return &ConnectionPool{
-		connections: make(map[string]*ManagedConnection),
+		connections: util.NewSyncMap[string, *ManagedConnection](),
 		maxSize:     maxSize,
 	}
 }
 
 // Get retrieves a connection by ID.
 func (cp *ConnectionPool) Get(id string) (*ManagedConnection, bool) {
-	cp.mu.RLock()
-	defer cp.mu.RUnlock()
-	conn, exists := cp.connections[id]
-	return conn, exists
+	return cp.connections.Load(id)
 }
 
 // Put adds a connection to the pool.
 func (cp *ConnectionPool) Put(id string, conn *ManagedConnection) error {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-
-	if len(cp.connections) >= cp.maxSize {
+	if cp.connections.Count() >= cp.maxSize {
 		return fmt.Errorf("connection pool is full (max size: %d)", cp.maxSize)
 	}
 
-	if _, exists := cp.connections[id]; exists {
+	// Try to add the connection - LoadOrStore will return existing if already present
+	_, loaded := cp.connections.LoadOrStore(id, conn)
+	if loaded {
 		return fmt.Errorf("connection with ID %s already exists", id)
 	}
 
-	cp.connections[id] = conn
 	cp.totalCreated.Add(1)
 	return nil
 }
 
 // Remove removes a connection from the pool.
 func (cp *ConnectionPool) Remove(id string) bool {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-
-	if conn, exists := cp.connections[id]; exists {
-		delete(cp.connections, id)
+	conn, exists := cp.connections.LoadAndDelete(id)
+	if exists {
 		cp.totalDestroyed.Add(1)
 
 		// Shutdown the connection
@@ -446,18 +463,14 @@ func (cp *ConnectionPool) Remove(id string) bool {
 
 // Size returns the current number of connections.
 func (cp *ConnectionPool) Size() int {
-	cp.mu.RLock()
-	defer cp.mu.RUnlock()
-	return len(cp.connections)
+	return cp.connections.Count()
 }
 
 // List returns all connection IDs.
 func (cp *ConnectionPool) List() []string {
-	cp.mu.RLock()
-	defer cp.mu.RUnlock()
-
-	ids := make([]string, 0, len(cp.connections))
-	for id := range cp.connections {
+	connectionMap := cp.connections.GetAll()
+	ids := make([]string, 0, len(connectionMap))
+	for id := range connectionMap {
 		ids = append(ids, id)
 	}
 	return ids
@@ -465,13 +478,12 @@ func (cp *ConnectionPool) List() []string {
 
 // Shutdown shuts down all connections in the pool.
 func (cp *ConnectionPool) Shutdown(ctx context.Context) error {
-	cp.mu.Lock()
-	connections := make([]*ManagedConnection, 0, len(cp.connections))
-	for _, conn := range cp.connections {
+	connectionMap := cp.connections.GetAll()
+	connections := make([]*ManagedConnection, 0, len(connectionMap))
+	for _, conn := range connectionMap {
 		connections = append(connections, conn)
 	}
-	cp.connections = make(map[string]*ManagedConnection)
-	cp.mu.Unlock()
+	cp.connections.Clear()
 
 	// Shutdown all connections concurrently
 	var wg sync.WaitGroup
@@ -505,11 +517,8 @@ func (cp *ConnectionPool) Shutdown(ctx context.Context) error {
 
 // GetMetrics returns pool metrics.
 func (cp *ConnectionPool) GetMetrics() PoolMetrics {
-	cp.mu.RLock()
-	defer cp.mu.RUnlock()
-
 	return PoolMetrics{
-		CurrentSize:    len(cp.connections),
+		CurrentSize:    cp.connections.Count(),
 		MaxSize:        cp.maxSize,
 		TotalCreated:   cp.totalCreated.Load(),
 		TotalDestroyed: cp.totalDestroyed.Load(),

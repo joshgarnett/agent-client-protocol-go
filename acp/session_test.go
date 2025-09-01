@@ -37,20 +37,20 @@ func TestSessionState(t *testing.T) {
 		state := NewSessionState(sessionID)
 
 		assert.Equal(t, sessionID, state.ID)
-		assert.Equal(t, SessionStatusPending, state.Status)
+		assert.Equal(t, SessionStatusPending, state.GetStatus())
 		assert.NotZero(t, state.CreatedAt)
-		assert.Equal(t, state.CreatedAt, state.LastActive)
+		assert.Equal(t, state.CreatedAt, state.LastActive.Load())
 		assert.NotNil(t, state.Metadata)
 	})
 
 	t.Run("UpdateActivity", func(t *testing.T) {
 		state := NewSessionState("test-session")
-		originalTime := state.LastActive
+		originalTime := state.LastActive.Load()
 
 		time.Sleep(10 * time.Millisecond)
 		state.UpdateActivity()
 
-		assert.True(t, state.LastActive.After(originalTime))
+		assert.True(t, state.LastActive.Load().After(originalTime))
 	})
 
 	t.Run("SetStatus", func(t *testing.T) {
@@ -387,7 +387,7 @@ func TestSessionManager(t *testing.T) {
 			// Manually set LastActive for testing
 			if i == 0 {
 				// Make this one old
-				session.LastActive = time.Now().Add(-2 * time.Hour)
+				session.LastActive.Store(time.Now().Add(-2 * time.Hour))
 			}
 		}
 
@@ -416,7 +416,7 @@ func TestMemorySessionStore(t *testing.T) {
 		loaded, err := store.Load("test-session")
 		require.NoError(t, err)
 		assert.Equal(t, session.ID, loaded.ID)
-		assert.Equal(t, session.Status, loaded.Status)
+		assert.Equal(t, session.GetStatus(), loaded.GetStatus())
 
 		// Check metadata was copied
 		val, exists := loaded.GetMetadata("key")

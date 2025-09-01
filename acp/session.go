@@ -3,10 +3,10 @@ package acp
 import (
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+	"github.com/joshgarnett/agent-client-protocol-go/util"
 )
 
 // SessionStatus represents the current status of a session.
@@ -47,107 +47,94 @@ func (s SessionStatus) String() string {
 type SessionState struct {
 	ID         api.SessionId
 	CreatedAt  time.Time
-	LastActive time.Time
-	Status     SessionStatus
-	Metadata   map[string]interface{}
-	mu         sync.RWMutex
+	LastActive *util.AtomicValue[time.Time]
+	Status     *util.AtomicValue[SessionStatus]
+	Metadata   *util.SyncMap[string, interface{}]
 }
 
 // NewSessionState creates a new session state.
 func NewSessionState(id api.SessionId) *SessionState {
 	now := time.Now()
-	return &SessionState{
+	ss := &SessionState{
 		ID:         id,
 		CreatedAt:  now,
-		LastActive: now,
-		Status:     SessionStatusPending,
-		Metadata:   make(map[string]interface{}),
+		LastActive: util.NewAtomicValue(now),
+		Status:     util.NewAtomicValue(SessionStatusPending),
+		Metadata:   util.NewSyncMap[string, interface{}](),
 	}
+	return ss
 }
 
 // UpdateActivity updates the last active timestamp.
 func (ss *SessionState) UpdateActivity() {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	ss.LastActive = time.Now()
+	ss.LastActive.Store(time.Now())
 }
 
 // SetStatus updates the session status.
 func (ss *SessionState) SetStatus(status SessionStatus) {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	ss.Status = status
-	ss.LastActive = time.Now()
+	ss.Status.Store(status)
+	ss.LastActive.Store(time.Now())
 }
 
 // GetStatus returns the current session status.
 func (ss *SessionState) GetStatus() SessionStatus {
-	ss.mu.RLock()
-	defer ss.mu.RUnlock()
-	return ss.Status
+	return ss.Status.Load()
 }
 
 // SetMetadata sets a metadata key-value pair.
 func (ss *SessionState) SetMetadata(key string, value interface{}) {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	ss.Metadata[key] = value
+	ss.Metadata.Store(key, value)
 }
 
 // GetMetadata retrieves a metadata value by key.
 func (ss *SessionState) GetMetadata(key string) (interface{}, bool) {
-	ss.mu.RLock()
-	defer ss.mu.RUnlock()
-	value, exists := ss.Metadata[key]
-	return value, exists
+	return ss.Metadata.Load(key)
 }
 
 // IsActive returns true if the session is currently active.
 func (ss *SessionState) IsActive() bool {
-	ss.mu.RLock()
-	defer ss.mu.RUnlock()
-	return ss.Status == SessionStatusActive
+	return ss.Status.Load() == SessionStatusActive
 }
 
 // Duration returns how long the session has been running.
 func (ss *SessionState) Duration() time.Duration {
-	ss.mu.RLock()
-	defer ss.mu.RUnlock()
 	return time.Since(ss.CreatedAt)
+}
+
+// sessionCallbacks holds all session callback functions.
+type sessionCallbacks struct {
+	onCreate func(*SessionState)
+	onUpdate func(*SessionState)
+	onDelete func(*SessionState)
 }
 
 // SessionManager manages multiple sessions.
 type SessionManager struct {
-	sessions map[api.SessionId]*SessionState
-	mu       sync.RWMutex
-
-	// Callbacks
-	onSessionCreate func(*SessionState)
-	onSessionUpdate func(*SessionState)
-	onSessionDelete func(*SessionState)
+	sessions  *util.SyncMap[api.SessionId, *SessionState]
+	callbacks *util.AtomicValue[*sessionCallbacks]
 }
 
 // NewSessionManager creates a new session manager.
 func NewSessionManager() *SessionManager {
 	return &SessionManager{
-		sessions: make(map[api.SessionId]*SessionState),
+		sessions:  util.NewSyncMap[api.SessionId, *SessionState](),
+		callbacks: util.NewAtomicValue(&sessionCallbacks{}),
 	}
 }
 
 // CreateSession creates a new session with the given ID.
 func (sm *SessionManager) CreateSession(id api.SessionId) (*SessionState, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	session := NewSessionState(id)
 
-	if _, exists := sm.sessions[id]; exists {
+	// Try to add the session, will return the existing one if already present
+	actual, loaded := sm.sessions.LoadOrStore(id, session)
+	if loaded {
 		return nil, fmt.Errorf("session %v already exists", id)
 	}
 
-	session := NewSessionState(id)
-	sm.sessions[id] = session
-
-	if sm.onSessionCreate != nil {
-		go sm.onSessionCreate(session)
+	callbacks := sm.callbacks.Load()
+	if callbacks.onCreate != nil {
+		go callbacks.onCreate(actual)
 	}
 
 	return session, nil
@@ -155,26 +142,21 @@ func (sm *SessionManager) CreateSession(id api.SessionId) (*SessionState, error)
 
 // GetSession retrieves a session by ID.
 func (sm *SessionManager) GetSession(id api.SessionId) (*SessionState, bool) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	session, exists := sm.sessions[id]
-	return session, exists
+	return sm.sessions.Load(id)
 }
 
 // UpdateSession updates the status of a session.
 func (sm *SessionManager) UpdateSession(id api.SessionId, status SessionStatus) error {
-	sm.mu.RLock()
-	session, exists := sm.sessions[id]
-	sm.mu.RUnlock()
-
+	session, exists := sm.sessions.Load(id)
 	if !exists {
 		return fmt.Errorf("session %v not found", id)
 	}
 
 	session.SetStatus(status)
 
-	if sm.onSessionUpdate != nil {
-		go sm.onSessionUpdate(session)
+	callbacks := sm.callbacks.Load()
+	if callbacks.onUpdate != nil {
+		go callbacks.onUpdate(session)
 	}
 
 	return nil
@@ -182,18 +164,14 @@ func (sm *SessionManager) UpdateSession(id api.SessionId, status SessionStatus) 
 
 // DeleteSession removes a session from the manager.
 func (sm *SessionManager) DeleteSession(id api.SessionId) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	session, exists := sm.sessions[id]
+	session, exists := sm.sessions.LoadAndDelete(id)
 	if !exists {
 		return fmt.Errorf("session %v not found", id)
 	}
 
-	delete(sm.sessions, id)
-
-	if sm.onSessionDelete != nil {
-		go sm.onSessionDelete(session)
+	callbacks := sm.callbacks.Load()
+	if callbacks.onDelete != nil {
+		go callbacks.onDelete(session)
 	}
 
 	return nil
@@ -201,11 +179,9 @@ func (sm *SessionManager) DeleteSession(id api.SessionId) error {
 
 // ListSessions returns all sessions.
 func (sm *SessionManager) ListSessions() []*SessionState {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
-	sessions := make([]*SessionState, 0, len(sm.sessions))
-	for _, session := range sm.sessions {
+	sessionMap := sm.sessions.GetAll()
+	sessions := make([]*SessionState, 0, len(sessionMap))
+	for _, session := range sessionMap {
 		sessions = append(sessions, session)
 	}
 	return sessions
@@ -213,11 +189,9 @@ func (sm *SessionManager) ListSessions() []*SessionState {
 
 // GetActiveSessions returns all active sessions.
 func (sm *SessionManager) GetActiveSessions() []*SessionState {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
+	sessionMap := sm.sessions.GetAll()
 	var active []*SessionState
-	for _, session := range sm.sessions {
+	for _, session := range sessionMap {
 		if session.IsActive() {
 			active = append(active, session)
 		}
@@ -227,11 +201,9 @@ func (sm *SessionManager) GetActiveSessions() []*SessionState {
 
 // GetSessionsByStatus returns all sessions with the specified status.
 func (sm *SessionManager) GetSessionsByStatus(status SessionStatus) []*SessionState {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
+	sessionMap := sm.sessions.GetAll()
 	var result []*SessionState
-	for _, session := range sm.sessions {
+	for _, session := range sessionMap {
 		if session.GetStatus() == status {
 			result = append(result, session)
 		}
@@ -241,18 +213,14 @@ func (sm *SessionManager) GetSessionsByStatus(status SessionStatus) []*SessionSt
 
 // Count returns the total number of sessions.
 func (sm *SessionManager) Count() int {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return len(sm.sessions)
+	return sm.sessions.Count()
 }
 
 // CountByStatus returns the count of sessions by status.
 func (sm *SessionManager) CountByStatus(status SessionStatus) int {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
+	sessionMap := sm.sessions.GetAll()
 	count := 0
-	for _, session := range sm.sessions {
+	for _, session := range sessionMap {
 		if session.GetStatus() == status {
 			count++
 		}
@@ -262,41 +230,65 @@ func (sm *SessionManager) CountByStatus(status SessionStatus) int {
 
 // OnSessionCreate sets the callback for session creation.
 func (sm *SessionManager) OnSessionCreate(callback func(*SessionState)) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.onSessionCreate = callback
+	sm.callbacks.Update(func(old *sessionCallbacks) *sessionCallbacks {
+		return &sessionCallbacks{
+			onCreate: callback,
+			onUpdate: old.onUpdate,
+			onDelete: old.onDelete,
+		}
+	})
 }
 
 // OnSessionUpdate sets the callback for session updates.
 func (sm *SessionManager) OnSessionUpdate(callback func(*SessionState)) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.onSessionUpdate = callback
+	sm.callbacks.Update(func(old *sessionCallbacks) *sessionCallbacks {
+		return &sessionCallbacks{
+			onCreate: old.onCreate,
+			onUpdate: callback,
+			onDelete: old.onDelete,
+		}
+	})
 }
 
 // OnSessionDelete sets the callback for session deletion.
 func (sm *SessionManager) OnSessionDelete(callback func(*SessionState)) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.onSessionDelete = callback
+	sm.callbacks.Update(func(old *sessionCallbacks) *sessionCallbacks {
+		return &sessionCallbacks{
+			onCreate: old.onCreate,
+			onUpdate: old.onUpdate,
+			onDelete: callback,
+		}
+	})
 }
 
 // CleanupInactiveSessions removes sessions that have been inactive for the specified duration.
 func (sm *SessionManager) CleanupInactiveSessions(inactiveDuration time.Duration) int {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	now := time.Now()
 	cleaned := 0
 
-	for id, session := range sm.sessions {
-		if now.Sub(session.LastActive) > inactiveDuration {
-			delete(sm.sessions, id)
-			cleaned++
+	// Get all sessions and identify inactive ones
+	sessionMap := sm.sessions.GetAll()
+	var toDelete []api.SessionId
+	var deletedSessions []*SessionState
 
-			if sm.onSessionDelete != nil {
-				go sm.onSessionDelete(session)
-			}
+	for id, session := range sessionMap {
+		if now.Sub(session.LastActive.Load()) > inactiveDuration {
+			toDelete = append(toDelete, id)
+			deletedSessions = append(deletedSessions, session)
+		}
+	}
+
+	// Delete inactive sessions
+	for _, id := range toDelete {
+		sm.sessions.Delete(id)
+		cleaned++
+	}
+
+	// Call callbacks for deleted sessions
+	callbacks := sm.callbacks.Load()
+	if callbacks.onDelete != nil {
+		for _, session := range deletedSessions {
+			go callbacks.onDelete(session)
 		}
 	}
 
@@ -321,14 +313,13 @@ type SessionStore interface {
 
 // MemorySessionStore provides in-memory session storage.
 type MemorySessionStore struct {
-	sessions map[api.SessionId]*SessionState
-	mu       sync.RWMutex
+	sessions *util.SyncMap[api.SessionId, *SessionState]
 }
 
 // NewMemorySessionStore creates a new in-memory session store.
 func NewMemorySessionStore() *MemorySessionStore {
 	return &MemorySessionStore{
-		sessions: make(map[api.SessionId]*SessionState),
+		sessions: util.NewSyncMap[api.SessionId, *SessionState](),
 	}
 }
 
@@ -338,33 +329,28 @@ func (m *MemorySessionStore) Save(session *SessionState) error {
 		return errors.New("session cannot be nil")
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	// Create a copy to avoid external mutations
 	sessionCopy := &SessionState{
 		ID:         session.ID,
 		CreatedAt:  session.CreatedAt,
-		LastActive: session.LastActive,
-		Status:     session.Status,
-		Metadata:   make(map[string]interface{}),
+		LastActive: util.NewAtomicValue(session.LastActive.Load()),
+		Status:     util.NewAtomicValue(session.Status.Load()),
+		Metadata:   util.NewSyncMap[string, interface{}](),
 	}
 
 	// Copy metadata
-	for k, v := range session.Metadata {
-		sessionCopy.Metadata[k] = v
+	metadataMap := session.Metadata.GetAll()
+	for k, v := range metadataMap {
+		sessionCopy.Metadata.Store(k, v)
 	}
 
-	m.sessions[session.ID] = sessionCopy
+	m.sessions.Store(session.ID, sessionCopy)
 	return nil
 }
 
 // Load retrieves a session from memory.
 func (m *MemorySessionStore) Load(id api.SessionId) (*SessionState, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	session, exists := m.sessions[id]
+	session, exists := m.sessions.Load(id)
 	if !exists {
 		return nil, fmt.Errorf("session %v not found", id)
 	}
@@ -373,14 +359,15 @@ func (m *MemorySessionStore) Load(id api.SessionId) (*SessionState, error) {
 	sessionCopy := &SessionState{
 		ID:         session.ID,
 		CreatedAt:  session.CreatedAt,
-		LastActive: session.LastActive,
-		Status:     session.Status,
-		Metadata:   make(map[string]interface{}),
+		LastActive: util.NewAtomicValue(session.LastActive.Load()),
+		Status:     util.NewAtomicValue(session.Status.Load()),
+		Metadata:   util.NewSyncMap[string, interface{}](),
 	}
 
 	// Copy metadata
-	for k, v := range session.Metadata {
-		sessionCopy.Metadata[k] = v
+	metadataMap := session.Metadata.GetAll()
+	for k, v := range metadataMap {
+		sessionCopy.Metadata.Store(k, v)
 	}
 
 	return sessionCopy, nil
@@ -388,36 +375,32 @@ func (m *MemorySessionStore) Load(id api.SessionId) (*SessionState, error) {
 
 // Delete removes a session from memory.
 func (m *MemorySessionStore) Delete(id api.SessionId) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.sessions[id]; !exists {
+	_, exists := m.sessions.LoadAndDelete(id)
+	if !exists {
 		return fmt.Errorf("session %v not found", id)
 	}
-
-	delete(m.sessions, id)
 	return nil
 }
 
 // List returns all sessions from memory.
 func (m *MemorySessionStore) List() ([]*SessionState, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	sessionMap := m.sessions.GetAll()
+	sessions := make([]*SessionState, 0, len(sessionMap))
 
-	sessions := make([]*SessionState, 0, len(m.sessions))
-	for _, session := range m.sessions {
+	for _, session := range sessionMap {
 		// Return copies to avoid external mutations
 		sessionCopy := &SessionState{
 			ID:         session.ID,
 			CreatedAt:  session.CreatedAt,
-			LastActive: session.LastActive,
-			Status:     session.Status,
-			Metadata:   make(map[string]interface{}),
+			LastActive: util.NewAtomicValue(session.LastActive.Load()),
+			Status:     util.NewAtomicValue(session.Status.Load()),
+			Metadata:   util.NewSyncMap[string, interface{}](),
 		}
 
 		// Copy metadata
-		for k, v := range session.Metadata {
-			sessionCopy.Metadata[k] = v
+		metadataMap := session.Metadata.GetAll()
+		for k, v := range metadataMap {
+			sessionCopy.Metadata.Store(k, v)
 		}
 
 		sessions = append(sessions, sessionCopy)
@@ -428,10 +411,7 @@ func (m *MemorySessionStore) List() ([]*SessionState, error) {
 
 // Exists checks if a session exists in memory.
 func (m *MemorySessionStore) Exists(id api.SessionId) (bool, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	_, exists := m.sessions[id]
+	_, exists := m.sessions.Load(id)
 	return exists, nil
 }
 
@@ -449,11 +429,7 @@ var stateTransitions = map[ConnectionState][]ConnectionState{
 }
 
 // CanTransitionTo checks if a state transition is valid.
-func (a *AgentConnection) CanTransitionTo(newState ConnectionState) bool {
-	a.mu.RLock()
-	currentState := a.state
-	a.mu.RUnlock()
-
+func (a *AgentConnection) CanTransitionTo(currentState ConnectionState, newState ConnectionState) bool {
 	validStates, exists := stateTransitions[currentState]
 	if !exists {
 		return false
@@ -469,21 +445,17 @@ func (a *AgentConnection) CanTransitionTo(newState ConnectionState) bool {
 
 // TransitionTo attempts to transition to a new state.
 func (a *AgentConnection) TransitionTo(newState ConnectionState) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	currentState, stateChangeCallbacks := a.state.GetStateAndCallbacks()
 
-	if !a.CanTransitionTo(newState) {
+	if !a.CanTransitionTo(currentState, newState) {
 		return fmt.Errorf("invalid state transition from %v to %v", a.state, newState)
 	}
 
-	oldState := a.state
-	a.state = newState
+	a.state.SetState(newState)
 
 	// Notify callbacks
-	if a.stateChangeCallbacks != nil {
-		for _, callback := range a.stateChangeCallbacks {
-			go callback(oldState, newState)
-		}
+	for _, callback := range stateChangeCallbacks {
+		go callback(currentState, newState)
 	}
 
 	return nil
@@ -491,23 +463,11 @@ func (a *AgentConnection) TransitionTo(newState ConnectionState) error {
 
 // OnStateChange registers a callback for state changes.
 func (a *AgentConnection) OnStateChange(callback StateChangeCallback) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.stateChangeCallbacks == nil {
-		a.stateChangeCallbacks = make([]StateChangeCallback, 0)
-	}
-	a.stateChangeCallbacks = append(a.stateChangeCallbacks, callback)
+	a.state.OnStateChange(callback)
 }
 
-// Add similar methods for ClientConnection
-
 // CanTransitionTo checks if a state transition is valid.
-func (c *ClientConnection) CanTransitionTo(newState ConnectionState) bool {
-	c.mu.RLock()
-	currentState := c.state
-	c.mu.RUnlock()
-
+func (c *ClientConnection) CanTransitionTo(currentState ConnectionState, newState ConnectionState) bool {
 	validStates, exists := stateTransitions[currentState]
 	if !exists {
 		return false
@@ -523,21 +483,17 @@ func (c *ClientConnection) CanTransitionTo(newState ConnectionState) bool {
 
 // TransitionTo attempts to transition to a new state.
 func (c *ClientConnection) TransitionTo(newState ConnectionState) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	currentState, stateChangeCallbacks := c.state.GetStateAndCallbacks()
 
-	if !c.CanTransitionTo(newState) {
+	if !c.CanTransitionTo(currentState, newState) {
 		return fmt.Errorf("invalid state transition from %v to %v", c.state, newState)
 	}
 
-	oldState := c.state
-	c.state = newState
+	c.state.SetState(newState)
 
 	// Notify callbacks
-	if c.stateChangeCallbacks != nil {
-		for _, callback := range c.stateChangeCallbacks {
-			go callback(oldState, newState)
-		}
+	for _, callback := range stateChangeCallbacks {
+		go callback(currentState, newState)
 	}
 
 	return nil
@@ -545,11 +501,5 @@ func (c *ClientConnection) TransitionTo(newState ConnectionState) error {
 
 // OnStateChange registers a callback for state changes.
 func (c *ClientConnection) OnStateChange(callback StateChangeCallback) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.stateChangeCallbacks == nil {
-		c.stateChangeCallbacks = make([]StateChangeCallback, 0)
-	}
-	c.stateChangeCallbacks = append(c.stateChangeCallbacks, callback)
+	c.state.OnStateChange(callback)
 }

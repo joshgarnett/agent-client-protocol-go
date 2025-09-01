@@ -7,11 +7,11 @@ import (
 	"io"
 	"log"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp"
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+	"github.com/joshgarnett/agent-client-protocol-go/util"
 )
 
 const (
@@ -34,8 +34,10 @@ func (s stdioReadWriteCloser) Close() error {
 }
 
 // activePrompts tracks ongoing prompts for cancellation support.
-var activePrompts = make(map[string]context.CancelFunc)
-var promptsMutex sync.RWMutex
+var activePrompts = util.NewSyncMap[string, context.CancelFunc]()
+
+// Global agent connection for handlers that need it
+var agentConn *acp.AgentConnection
 
 // Example agent demonstrates ACP agent implementation with session management,
 // tool calls, permission handling, and cancellation support.
@@ -44,6 +46,7 @@ func main() {
 
 	registry := acp.NewHandlerRegistry()
 
+	// Register all handlers (including the one that needs the connection)
 	registry.RegisterInitializeHandler(handleInitialize)
 	registry.RegisterAuthenticateHandler(handleAuthenticate)
 	registry.RegisterSessionNewHandler(handleSessionNew)
@@ -51,7 +54,12 @@ func main() {
 	registry.RegisterSessionCancelHandler(handleSessionCancel)
 
 	stdio := stdioReadWriteCloser{Reader: os.Stdin, Writer: os.Stdout}
+
+	// Create connection with all handlers registered
 	conn := acp.NewAgentConnectionStdio(ctx, stdio, registry.Handler())
+
+	// Store connection globally for use by handlers
+	agentConn = conn
 
 	log.Printf("Example Agent started (PID: %d), waiting for client connection...\n", os.Getpid())
 	if err := conn.Wait(); err != nil {
@@ -112,58 +120,54 @@ func handleSessionNew(_ context.Context, params *api.NewSessionRequest) (*api.Ne
 }
 
 // handleSessionPrompt handles session/prompt requests and demonstrates agent workflow.
-func handleSessionPrompt(ctx context.Context, params *api.PromptRequest) (*api.PromptResponse, error) {
+func handleSessionPrompt(_ context.Context, params *api.PromptRequest) (*api.PromptResponse, error) {
 	log.Printf("[PROMPT] Starting prompt processing for session: %s\n", params.SessionId)
 	log.Printf("[PROMPT] Received %d content blocks\n", len(params.Prompt))
 
-	// Set up cancellation support for this prompt
-	promptCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	promptsMutex.Lock()
-	activePrompts[string(params.SessionId)] = cancel
-	promptsMutex.Unlock()
-
-	defer func() {
-		promptsMutex.Lock()
-		delete(activePrompts, string(params.SessionId))
-		promptsMutex.Unlock()
-	}()
-
-	// Get agent connection from context to send session updates
-	conn, ok := ctx.Value("agent_connection").(*acp.AgentConnection)
-	if !ok {
-		log.Println("[ERROR] Agent connection not found in context")
+	// Use global connection for session updates
+	if agentConn == nil {
+		log.Println("[ERROR] Agent connection not available")
 		return &api.PromptResponse{StopReason: api.StopReasonRefusal}, errors.New("agent connection not available")
 	}
 
-	// Run the agent simulation workflow
-	stopReason, err := simulateAgentTurn(promptCtx, conn, params)
-	if err != nil {
-		log.Printf("[PROMPT] Error during agent simulation: %v\n", err)
-		if promptCtx.Err() == context.Canceled {
-			return &api.PromptResponse{StopReason: api.StopReasonCancelled}, nil
-		}
-		return &api.PromptResponse{StopReason: api.StopReasonRefusal}, err
-	}
+	// With the hybrid architecture, SendSessionUpdate() is now safe to call from handlers!
+	// However, synchronous Call() methods (like requestPermission) can still deadlock,
+	// so we still use async processing for those parts.
 
-	log.Printf("[PROMPT] Completed prompt processing with stop reason: %s\n", stopReason)
-	return &api.PromptResponse{StopReason: stopReason}, nil
+	// Create a background context that can be cancelled independently
+	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+
+	// Store the cancel function for this session
+	activePrompts.Store(string(params.SessionId), backgroundCancel)
+
+	go func() {
+		defer func() {
+			// Clean up when done
+			activePrompts.Delete(string(params.SessionId))
+		}()
+
+		stopReason, err := simulateAgentTurn(backgroundCtx, agentConn, params)
+		if err != nil {
+			log.Printf("[PROMPT] Error during agent simulation: %v\n", err)
+		} else {
+			log.Printf("[PROMPT] Agent turn completed with stop reason: %s\n", stopReason)
+		}
+	}()
+
+	// Return immediately - the agent work continues in background
+	return &api.PromptResponse{StopReason: api.StopReasonEndTurn}, nil
 }
 
 // handleSessionCancel handles session cancellation requests.
 func handleSessionCancel(_ context.Context, params *api.CancelNotification) error {
 	log.Printf("[CANCEL] Cancellation requested for session: %s\n", params.SessionId)
 
-	promptsMutex.Lock()
-	if cancel, exists := activePrompts[string(params.SessionId)]; exists {
+	if cancel, exists := activePrompts.LoadAndDelete(string(params.SessionId)); exists {
 		cancel()
-		delete(activePrompts, string(params.SessionId))
 		log.Printf("[CANCEL] Successfully cancelled session: %s\n", params.SessionId)
 	} else {
 		log.Printf("[CANCEL] No active prompt found for session: %s\n", params.SessionId)
 	}
-	promptsMutex.Unlock()
 
 	return nil
 }
@@ -393,8 +397,7 @@ func requestPermission(
 		Options:   []api.PermissionOption{allowOption, rejectOption},
 	}
 
-	var response api.RequestPermissionResponse
-	err := conn.Call(ctx, api.MethodSessionRequestPermission, permissionRequest, &response)
+	response, err := conn.SessionRequestPermission(ctx, permissionRequest)
 	if err != nil {
 		return false, fmt.Errorf("permission request call failed: %w", err)
 	}

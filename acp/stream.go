@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/joshgarnett/agent-client-protocol-go/util"
 )
 
 // StreamMessageDirection indicates the direction of a message relative to this side of the connection.
@@ -145,16 +148,15 @@ func (sr *StreamReceiver) Close() error {
 // This is used internally by the RPC connection to allow multiple receivers
 // to observe the message stream.
 type StreamBroadcast struct {
-	mu        sync.RWMutex
-	receivers []chan StreamMessage
-	closed    bool
+	receivers *util.SyncSlice[chan StreamMessage]
+	closed    atomic.Bool
 	done      chan struct{}
 }
 
 // NewStreamBroadcast creates a new stream broadcast.
 func NewStreamBroadcast() *StreamBroadcast {
 	return &StreamBroadcast{
-		receivers: make([]chan StreamMessage, 0),
+		receivers: util.NewSyncSlice[chan StreamMessage](),
 		done:      make(chan struct{}),
 	}
 }
@@ -164,10 +166,7 @@ func NewStreamBroadcast() *StreamBroadcast {
 // Each receiver will get its own copy of every message.
 // The returned receiver should be closed when no longer needed to prevent memory leaks.
 func (sb *StreamBroadcast) Subscribe() *StreamReceiver {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-
-	if sb.closed {
+	if sb.closed.Load() {
 		// Return a receiver that's already closed
 		ch := make(chan StreamMessage)
 		close(ch)
@@ -176,7 +175,7 @@ func (sb *StreamBroadcast) Subscribe() *StreamReceiver {
 
 	// Create buffered channel to prevent blocking
 	ch := make(chan StreamMessage, defaultBufferSize)
-	sb.receivers = append(sb.receivers, ch)
+	sb.receivers.Append(ch)
 
 	return &StreamReceiver{ch: ch, done: sb.done}
 }
@@ -185,52 +184,50 @@ func (sb *StreamBroadcast) Subscribe() *StreamReceiver {
 //
 // This method is non-blocking and will drop messages if receivers can't keep up.
 func (sb *StreamBroadcast) Broadcast(message StreamMessage) {
-	sb.mu.RLock()
-	defer sb.mu.RUnlock()
+	if sb.closed.Load() {
+		return
+	}
 
-	if sb.closed {
+	// Get snapshot of all receivers
+	receivers := sb.receivers.GetAll()
+	if receivers == nil {
 		return
 	}
 
 	// Send to all receivers, but don't block if they're full
-	for i, ch := range sb.receivers {
+	for _, ch := range receivers {
 		select {
 		case ch <- message:
 			// Message sent successfully
 		default:
 			// Receiver is full, skip it to prevent blocking
 			// In a production system, we might want to close slow receivers
-			_ = i // Prevent unused variable warning
 		}
 	}
 }
 
 // Close closes the stream broadcast and all associated receivers.
 func (sb *StreamBroadcast) Close() error {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-
-	if sb.closed {
+	// Use CompareAndSwap to ensure we only close once
+	if !sb.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 
-	sb.closed = true
 	close(sb.done)
 
 	// Close all receiver channels
-	for _, ch := range sb.receivers {
+	receivers := sb.receivers.GetAll()
+	for _, ch := range receivers {
 		close(ch)
 	}
-	sb.receivers = nil
+	sb.receivers.Clear()
 
 	return nil
 }
 
 // ReceiverCount returns the number of active receivers.
 func (sb *StreamBroadcast) ReceiverCount() int {
-	sb.mu.RLock()
-	defer sb.mu.RUnlock()
-	return len(sb.receivers)
+	return sb.receivers.Len()
 }
 
 // Common errors for stream operations.
