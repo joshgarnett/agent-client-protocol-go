@@ -35,4 +35,8 @@ go.work.sum
 /generate
 schema/
 bin/
+/agent
 /client
+examples/agent/agent
+examples/client/client
+reference/

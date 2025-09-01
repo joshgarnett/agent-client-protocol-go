@@ -16,12 +16,12 @@ Protocol flow: Initialize → Authenticate → Sessions → Operations
 
 Code generation: `make fetch-schema` downloads schemas, `make generate` creates Go types and constants.
 
-Testing uses mock transports, connection pairs, and testify suites for comprehensive coverage.
+Testing uses mock transports, connection pairs, and testify suites for testing coverage.
 
 # Development Workflow
 
 After making changes to Go files:
-1. Implement robust, generalizable solutions that work for all valid inputs
+1. Implement generalizable solutions that work for all valid inputs
 2. Run `make check` to verify code quality (test + fmt + vet + lint)
 3. Ensure all tests pass before considering the task complete
 
@@ -50,17 +50,48 @@ After making changes to Go files:
 - End comments with periods and document all exports
 - Accept `context.Context` as first parameter, use `_` if unused
 
+# Documentation Standards
+
+## Language and Tone
+
+- Use professional, measured language in documentation
+- Avoid promotional or marketing language
+- Prefer simple, direct descriptions over elaborate ones
+- Examples of preferred language:
+  - "demonstrates" instead of "comprehensively demonstrates"
+  - "agent implementation" instead of "complete/full-featured agent"
+  - "error handling" instead of "robust/comprehensive error handling"
+  - "file system integration" instead of "complete file system integration"
+  - "formatting" instead of "rich formatting"
+
+## Diagrams and Visual Documentation
+
+- Use Mermaid syntax for all diagrams in Markdown files
+- For sequence diagrams showing protocol flows, use `sequenceDiagram`
+- For architecture diagrams, use `graph` or `flowchart`
+- For state machines, use `stateDiagram`
+- Avoid ASCII art diagrams in favor of proper Mermaid syntax
+- Example sequence diagram format:
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Agent
+    
+    Client->>Agent: method_name (description)
+    Agent-->>Client: response
+```
+
 # Implementation Guidelines
 
 When working with this codebase:
 - Understand the context: This is a production JSON-RPC library requiring high reliability
 - Follow schema-driven development: Generated types ensure protocol compliance
 - Prioritize type safety: Use the HandlerRegistry for automatic marshaling
-- Test comprehensively: Add tests for both success and error scenarios
+- Test thoroughly: Add tests for both success and error scenarios
 - Maintain backwards compatibility: Changes must not break existing agent/client implementations
 
 Task execution:
 - Request clarification if requirements are ambiguous
-- Implement complete solutions rather than partial implementations
+- Implement solutions rather than partial implementations
 - Prefer editing existing files over creating new ones
 - Run the full development workflow before considering tasks complete

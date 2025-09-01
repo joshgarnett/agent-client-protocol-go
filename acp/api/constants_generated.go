@@ -4,24 +4,24 @@ package api
 
 // Agent method constants
 const (
-	MethodSessionLoad   = "session/load"
-	MethodSessionNew    = "session/new"
-	MethodSessionPrompt = "session/prompt"
 	MethodAuthenticate  = "authenticate"
 	MethodInitialize    = "initialize"
 	MethodSessionCancel = "session/cancel"
+	MethodSessionLoad   = "session/load"
+	MethodSessionNew    = "session/new"
+	MethodSessionPrompt = "session/prompt"
 )
 
 // Client method constants
 const (
-	MethodFsWriteTextFile          = "fs/write_text_file"
-	MethodSessionRequestPermission = "session/request_permission"
 	MethodSessionUpdate            = "session/update"
 	MethodTerminalCreate           = "terminal/create"
 	MethodTerminalOutput           = "terminal/output"
 	MethodTerminalRelease          = "terminal/release"
 	MethodTerminalWaitForExit      = "terminal/wait_for_exit"
 	MethodFsReadTextFile           = "fs/read_text_file"
+	MethodFsWriteTextFile          = "fs/write_text_file"
+	MethodSessionRequestPermission = "session/request_permission"
 )
 
 // Protocol version
