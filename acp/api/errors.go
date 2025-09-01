@@ -8,13 +8,14 @@ import (
 
 // ACP-specific error codes (using the reserved range for application errors).
 const (
-	ErrorCodeInitializationError = -32000
-	ErrorCodeUnauthorized        = -32001
-	ErrorCodeForbidden           = -32002
-	ErrorCodeNotFound            = -32003
-	ErrorCodeConflict            = -32004
-	ErrorCodeTooManyRequests     = -32005
-	ErrorCodeInternalServerError = -32006
+	ErrorCodeAuthRequired        = -32000 // Authentication required (matches Rust/TypeScript)
+	ErrorCodeInitializationError = -32001
+	ErrorCodeUnauthorized        = -32002
+	ErrorCodeForbidden           = -32003
+	ErrorCodeNotFound            = -32004
+	ErrorCodeConflict            = -32005
+	ErrorCodeTooManyRequests     = -32006
+	ErrorCodeInternalServerError = -32007
 )
 
 // ACPError represents an Agent Client Protocol error.
@@ -50,6 +51,7 @@ var (
 	ErrInternalError  = ACPError{Code: int(jsonrpc2.CodeInternalError), Message: "Internal error"}
 
 	// ACP-specific errors.
+	ErrAuthRequired        = ACPError{Code: ErrorCodeAuthRequired, Message: "Authentication required"}
 	ErrInitializationError = ACPError{Code: ErrorCodeInitializationError, Message: "Initialization error"}
 	ErrUnauthorized        = ACPError{Code: ErrorCodeUnauthorized, Message: "Unauthorized"}
 	ErrForbidden           = ACPError{Code: ErrorCodeForbidden, Message: "Forbidden"}

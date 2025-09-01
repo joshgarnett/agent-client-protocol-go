@@ -21,20 +21,25 @@ const (
 
 // AgentConnection represents a connection from an agent to a client.
 type AgentConnection struct {
-	conn    *jsonrpc2.Conn
-	handler jsonrpc2.Handler
-	state   ConnectionState
-	stateMu sync.RWMutex
+	conn                 *jsonrpc2.Conn
+	handler              jsonrpc2.Handler
+	state                ConnectionState
+	stateMu              sync.RWMutex
+	broadcast            *StreamBroadcast
+	stateChangeCallbacks []StateChangeCallback
+	mu                   sync.RWMutex
 }
 
 // NewAgentConnection creates a new agent connection with the given transport.
 func NewAgentConnection(ctx context.Context, stream jsonrpc2.ObjectStream, handler jsonrpc2.Handler) *AgentConnection {
 	conn := jsonrpc2.NewConn(ctx, stream, handler)
+	broadcast := NewStreamBroadcast()
 
 	return &AgentConnection{
-		conn:    conn,
-		handler: handler,
-		state:   StateUninitialized,
+		conn:      conn,
+		handler:   handler,
+		state:     StateUninitialized,
+		broadcast: broadcast,
 	}
 }
 
@@ -56,6 +61,9 @@ func (a *AgentConnection) Notify(ctx context.Context, method string, params any)
 
 // Close closes the connection.
 func (a *AgentConnection) Close() error {
+	if a.broadcast != nil {
+		_ = a.broadcast.Close()
+	}
 	return a.conn.Close()
 }
 
@@ -128,4 +136,20 @@ func (a *AgentConnection) GetState() ConnectionState {
 	a.stateMu.RLock()
 	defer a.stateMu.RUnlock()
 	return a.state
+}
+
+// Subscribe creates a new receiver for observing the message stream.
+//
+// This allows observing all JSON-RPC messages flowing through the connection
+// for debugging, logging, or building development tools.
+func (a *AgentConnection) Subscribe() *StreamReceiver {
+	if a.broadcast == nil {
+		// Return a receiver that's already closed if broadcast is not available
+		ch := make(chan StreamMessage)
+		close(ch)
+		done := make(chan struct{})
+		close(done)
+		return &StreamReceiver{ch: ch, done: done}
+	}
+	return a.broadcast.Subscribe()
 }

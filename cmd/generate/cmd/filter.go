@@ -28,7 +28,6 @@ func runFilter(_ *cobra.Command, _ []string) {
 	}
 }
 
-//nolint:gocognit // Complex parsing logic requires high cognitive complexity
 func doFilter() error {
 	// Types that we generate manually and should be filtered out
 	conflictingTypes := []string{

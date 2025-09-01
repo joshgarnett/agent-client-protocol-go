@@ -84,8 +84,6 @@ type PropertyPair struct {
 }
 
 // FindEnums identifies all string enums (oneOf with const values).
-//
-//nolint:gocognit // Complex schema parsing requires high cognitive complexity
 func (p *SchemaParser) FindEnums() ([]EnumDefinition, error) {
 	var enums []EnumDefinition
 

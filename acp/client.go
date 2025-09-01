@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"io"
+	"sync"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
 	"github.com/sourcegraph/jsonrpc2"
@@ -10,8 +11,12 @@ import (
 
 // ClientConnection represents a connection from a client to an agent.
 type ClientConnection struct {
-	conn    *jsonrpc2.Conn
-	handler jsonrpc2.Handler
+	conn                 *jsonrpc2.Conn
+	handler              jsonrpc2.Handler
+	broadcast            *StreamBroadcast
+	state                ConnectionState
+	stateChangeCallbacks []StateChangeCallback
+	mu                   sync.RWMutex
 }
 
 // NewClientConnection creates a new client connection with the given transport.
@@ -21,10 +26,12 @@ func NewClientConnection(
 	handler jsonrpc2.Handler,
 ) *ClientConnection {
 	conn := jsonrpc2.NewConn(ctx, stream, handler)
+	broadcast := NewStreamBroadcast()
 
 	return &ClientConnection{
-		conn:    conn,
-		handler: handler,
+		conn:      conn,
+		handler:   handler,
+		broadcast: broadcast,
 	}
 }
 
@@ -46,6 +53,9 @@ func (c *ClientConnection) Notify(ctx context.Context, method string, params any
 
 // Close closes the connection.
 func (c *ClientConnection) Close() error {
+	if c.broadcast != nil {
+		_ = c.broadcast.Close()
+	}
 	return c.conn.Close()
 }
 
@@ -122,4 +132,20 @@ func (c *ClientConnection) TerminalWaitForExit(
 		return nil, err
 	}
 	return &result, nil
+}
+
+// Subscribe creates a new receiver for observing the message stream.
+//
+// This allows observing all JSON-RPC messages flowing through the connection
+// for debugging, logging, or building development tools.
+func (c *ClientConnection) Subscribe() *StreamReceiver {
+	if c.broadcast == nil {
+		// Return a receiver that's already closed if broadcast is not available
+		ch := make(chan StreamMessage)
+		close(ch)
+		done := make(chan struct{})
+		close(done)
+		return &StreamReceiver{ch: ch, done: done}
+	}
+	return c.broadcast.Subscribe()
 }
