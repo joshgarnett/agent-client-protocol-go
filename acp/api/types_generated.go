@@ -106,6 +106,30 @@ type AuthenticateRequest struct {
 	MethodId AuthMethodId `json:"methodId" yaml:"methodId"`
 }
 
+// Information about a command.
+type AvailableCommand struct {
+	// Human-readable description of what the command does.
+	Description string `json:"description" yaml:"description"`
+
+	// Input for the command if required
+	Input interface{} `json:"input,omitempty" yaml:"input,omitempty"`
+
+	// Command name (e.g., "create_plan", "research_codebase").
+	Name string `json:"name" yaml:"name"`
+}
+
+// All text that was typed after the command name is provided as input.
+type AvailableCommandInput struct {
+	// A brief description of the expected input
+	Hint string `json:"hint" yaml:"hint"`
+}
+
+// All text that was typed after the command name is provided as input.
+type AvailableCommandInput_0 struct {
+	// A brief description of the expected input
+	Hint string `json:"hint" yaml:"hint"`
+}
+
 // Binary resource contents.
 type BlobResourceContents struct {
 	// Blob corresponds to the JSON schema field "blob".
@@ -325,6 +349,14 @@ type InitializeResponse struct {
 	ProtocolVersion ProtocolVersion `json:"protocolVersion" yaml:"protocolVersion"`
 }
 
+type KillTerminalRequest struct {
+	// SessionId corresponds to the JSON schema field "sessionId".
+	SessionId SessionId `json:"sessionId" yaml:"sessionId"`
+
+	// TerminalId corresponds to the JSON schema field "terminalId".
+	TerminalId string `json:"terminalId" yaml:"terminalId"`
+}
+
 // Request parameters for loading an existing session.
 //
 // Only available if the agent supports the `loadSession` capability.
@@ -380,6 +412,11 @@ type NewSessionRequest struct {
 // See protocol docs: [Creating a
 // Session](https://agentclientprotocol.com/protocol/session-setup#creating-a-session)
 type NewSessionResponse struct {
+	// **UNSTABLE**
+	//
+	// Commands that may be executed via `session/prompt` requests
+	AvailableCommands []AvailableCommand `json:"availableCommands,omitempty" yaml:"availableCommands,omitempty"`
+
 	// Unique identifier for the created session.
 	//
 	// Used in all subsequent requests for this conversation.
@@ -644,9 +681,95 @@ type TerminalExitStatus struct {
 	Signal *string `json:"signal,omitempty" yaml:"signal,omitempty"`
 }
 
-type TextContentAnnotations_0 = Annotations
+type TerminalOutputRequest struct {
+	// SessionId corresponds to the JSON schema field "sessionId".
+	SessionId SessionId `json:"sessionId" yaml:"sessionId"`
+
+	// TerminalId corresponds to the JSON schema field "terminalId".
+	TerminalId string `json:"terminalId" yaml:"terminalId"`
+}
+
+type TerminalOutputResponse struct {
+	// ExitStatus corresponds to the JSON schema field "exitStatus".
+	ExitStatus *TerminalOutputResponseExitStatus `json:"exitStatus,omitempty" yaml:"exitStatus,omitempty"`
+
+	// Output corresponds to the JSON schema field "output".
+	Output string `json:"output" yaml:"output"`
+
+	// Truncated corresponds to the JSON schema field "truncated".
+	Truncated bool `json:"truncated" yaml:"truncated"`
+}
+
+type TerminalOutputResponseExitStatus struct {
+	// ExitCode corresponds to the JSON schema field "exitCode".
+	ExitCode *int `json:"exitCode,omitempty" yaml:"exitCode,omitempty"`
+
+	// Signal corresponds to the JSON schema field "signal".
+	Signal *string `json:"signal,omitempty" yaml:"signal,omitempty"`
+}
+
+// Text provided to or from an LLM.
+type TextContent struct {
+	// Annotations corresponds to the JSON schema field "annotations".
+	Annotations *TextContentAnnotations `json:"annotations,omitempty" yaml:"annotations,omitempty"`
+
+	// Text corresponds to the JSON schema field "text".
+	Text string `json:"text" yaml:"text"`
+}
+
 type ImageContentAnnotations_0 = Annotations
+
+// A file location being accessed or modified by a tool.
+//
+// Enables clients to implement "follow-along" features that track
+// which files the agent is working with in real-time.
+//
+// See protocol docs: [Following the
+// Agent](https://agentclientprotocol.com/protocol/tool-calls#following-the-agent)
+type ToolCallLocation struct {
+	// Optional line number within the file.
+	Line *int `json:"line,omitempty" yaml:"line,omitempty"`
+
+	// The file path being accessed or modified.
+	Path string `json:"path" yaml:"path"`
+}
+
+type ToolCallUpdateContentElem interface{}
+
+type AudioContentAnnotations_0 = Annotations
 type EmbeddedResourceAnnotations_0 = Annotations
+type TerminalOutputResponseExitStatus_0 = TerminalExitStatus
+
+// Text-based resource contents.
+type TextResourceContents struct {
+	// MimeType corresponds to the JSON schema field "mimeType".
+	MimeType *string `json:"mimeType,omitempty" yaml:"mimeType,omitempty"`
+
+	// Text corresponds to the JSON schema field "text".
+	Text string `json:"text" yaml:"text"`
+
+	// Uri corresponds to the JSON schema field "uri".
+	Uri string `json:"uri" yaml:"uri"`
+}
+
+type ResourceLinkAnnotations_0 = Annotations
+type TextContentAnnotations_0 = Annotations
+
+// Unique identifier for a tool call within a session.
+type ToolCallId string
+
+// Optional annotations for the client. The client can use annotations to inform
+// how objects are used or displayed
+type TextContentAnnotations struct {
+	// Audience corresponds to the JSON schema field "audience".
+	Audience []Role `json:"audience,omitempty" yaml:"audience,omitempty"`
+
+	// LastModified corresponds to the JSON schema field "lastModified".
+	LastModified *string `json:"lastModified,omitempty" yaml:"lastModified,omitempty"`
+
+	// Priority corresponds to the JSON schema field "priority".
+	Priority *float64 `json:"priority,omitempty" yaml:"priority,omitempty"`
+}
 
 // An update to an existing tool call.
 //
@@ -679,91 +802,6 @@ type ToolCallUpdate struct {
 
 	// The ID of the tool call being updated.
 	ToolCallId ToolCallId `json:"toolCallId" yaml:"toolCallId"`
-}
-
-// Unique identifier for a tool call within a session.
-type ToolCallId string
-
-// A file location being accessed or modified by a tool.
-//
-// Enables clients to implement "follow-along" features that track
-// which files the agent is working with in real-time.
-//
-// See protocol docs: [Following the
-// Agent](https://agentclientprotocol.com/protocol/tool-calls#following-the-agent)
-type ToolCallLocation struct {
-	// Optional line number within the file.
-	Line *int `json:"line,omitempty" yaml:"line,omitempty"`
-
-	// The file path being accessed or modified.
-	Path string `json:"path" yaml:"path"`
-}
-
-type ToolCallUpdateContentElem interface{}
-
-type AudioContentAnnotations_0 = Annotations
-type TerminalOutputRequest struct {
-	// SessionId corresponds to the JSON schema field "sessionId".
-	SessionId SessionId `json:"sessionId" yaml:"sessionId"`
-
-	// TerminalId corresponds to the JSON schema field "terminalId".
-	TerminalId string `json:"terminalId" yaml:"terminalId"`
-}
-
-type TerminalOutputResponseExitStatus_0 = TerminalExitStatus
-type TerminalOutputResponseExitStatus struct {
-	// ExitCode corresponds to the JSON schema field "exitCode".
-	ExitCode *int `json:"exitCode,omitempty" yaml:"exitCode,omitempty"`
-
-	// Signal corresponds to the JSON schema field "signal".
-	Signal *string `json:"signal,omitempty" yaml:"signal,omitempty"`
-}
-
-type TerminalOutputResponse struct {
-	// ExitStatus corresponds to the JSON schema field "exitStatus".
-	ExitStatus *TerminalOutputResponseExitStatus `json:"exitStatus,omitempty" yaml:"exitStatus,omitempty"`
-
-	// Output corresponds to the JSON schema field "output".
-	Output string `json:"output" yaml:"output"`
-
-	// Truncated corresponds to the JSON schema field "truncated".
-	Truncated bool `json:"truncated" yaml:"truncated"`
-}
-
-type ResourceLinkAnnotations_0 = Annotations
-
-// Optional annotations for the client. The client can use annotations to inform
-// how objects are used or displayed
-type TextContentAnnotations struct {
-	// Audience corresponds to the JSON schema field "audience".
-	Audience []Role `json:"audience,omitempty" yaml:"audience,omitempty"`
-
-	// LastModified corresponds to the JSON schema field "lastModified".
-	LastModified *string `json:"lastModified,omitempty" yaml:"lastModified,omitempty"`
-
-	// Priority corresponds to the JSON schema field "priority".
-	Priority *float64 `json:"priority,omitempty" yaml:"priority,omitempty"`
-}
-
-// Text provided to or from an LLM.
-type TextContent struct {
-	// Annotations corresponds to the JSON schema field "annotations".
-	Annotations *TextContentAnnotations `json:"annotations,omitempty" yaml:"annotations,omitempty"`
-
-	// Text corresponds to the JSON schema field "text".
-	Text string `json:"text" yaml:"text"`
-}
-
-// Text-based resource contents.
-type TextResourceContents struct {
-	// MimeType corresponds to the JSON schema field "mimeType".
-	MimeType *string `json:"mimeType,omitempty" yaml:"mimeType,omitempty"`
-
-	// Text corresponds to the JSON schema field "text".
-	Text string `json:"text" yaml:"text"`
-
-	// Uri corresponds to the JSON schema field "uri".
-	Uri string `json:"uri" yaml:"uri"`
 }
 
 type ToolCallContentElem interface{}

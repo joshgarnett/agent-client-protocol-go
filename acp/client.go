@@ -135,6 +135,11 @@ func (c *ClientConnection) TerminalRelease(ctx context.Context, params *api.Rele
 	return c.core.Call(ctx, api.MethodTerminalRelease, params, nil)
 }
 
+// TerminalKill sends a terminal/kill request to the agent.
+func (c *ClientConnection) TerminalKill(ctx context.Context, params *api.KillTerminalRequest) error {
+	return c.core.Call(ctx, api.MethodTerminalKill, params, nil)
+}
+
 // TerminalWaitForExit sends a terminal/wait_for_exit request to the agent.
 func (c *ClientConnection) TerminalWaitForExit(
 	ctx context.Context,
