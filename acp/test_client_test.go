@@ -3,31 +3,21 @@ package acp
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+	"github.com/joshgarnett/agent-client-protocol-go/util"
 )
 
 // TestClient implements a mock client for testing.
 type TestClient struct {
-	fileContents   map[string]string
-	writtenFiles   []FileWrite
-	fileContentsMu sync.RWMutex
-	writtenFilesMu sync.RWMutex
-
-	permissionResponses []api.RequestPermissionResponse
-	permissionMu        sync.Mutex
-
-	sessionNotifications []api.SessionNotification
-	sessionMu            sync.RWMutex
-
-	terminals   map[string]*TestTerminal
-	terminalsMu sync.RWMutex
-	terminalIDs int64
-
-	shouldError   map[string]bool
-	shouldErrorMu sync.RWMutex
+	fileContents         *util.SyncMap[string, string]
+	writtenFiles         *util.SyncSlice[FileWrite]
+	permissionResponses  *util.SyncSlice[api.RequestPermissionResponse]
+	sessionNotifications *util.SyncSlice[api.SessionNotification]
+	terminals            *util.SyncMap[string, *TestTerminal]
+	terminalIDs          int64
+	shouldError          *util.SyncMap[string, bool]
 }
 
 type FileWrite struct {
@@ -45,58 +35,43 @@ type TestTerminal struct {
 // NewTestClient creates a new test client.
 func NewTestClient() *TestClient {
 	return &TestClient{
-		fileContents:         make(map[string]string),
-		writtenFiles:         make([]FileWrite, 0),
-		permissionResponses:  make([]api.RequestPermissionResponse, 0),
-		sessionNotifications: make([]api.SessionNotification, 0),
-		terminals:            make(map[string]*TestTerminal),
-		shouldError:          make(map[string]bool),
+		fileContents:         util.NewSyncMap[string, string](),
+		writtenFiles:         util.NewSyncSlice[FileWrite](),
+		permissionResponses:  util.NewSyncSlice[api.RequestPermissionResponse](),
+		sessionNotifications: util.NewSyncSlice[api.SessionNotification](),
+		terminals:            util.NewSyncMap[string, *TestTerminal](),
+		shouldError:          util.NewSyncMap[string, bool](),
 	}
 }
 
 // AddFileContent adds content for a file path.
 func (c *TestClient) AddFileContent(path, content string) {
-	c.fileContentsMu.Lock()
-	defer c.fileContentsMu.Unlock()
-	c.fileContents[path] = content
+	c.fileContents.Store(path, content)
 }
 
 // GetWrittenFiles returns all files that were written.
 func (c *TestClient) GetWrittenFiles() []FileWrite {
-	c.writtenFilesMu.RLock()
-	defer c.writtenFilesMu.RUnlock()
-	result := make([]FileWrite, len(c.writtenFiles))
-	copy(result, c.writtenFiles)
-	return result
+	return c.writtenFiles.GetAll()
 }
 
 // QueuePermissionResponse queues a permission response.
 func (c *TestClient) QueuePermissionResponse(response api.RequestPermissionResponse) {
-	c.permissionMu.Lock()
-	defer c.permissionMu.Unlock()
-	c.permissionResponses = append(c.permissionResponses, response)
+	c.permissionResponses.Append(response)
 }
 
 // GetSessionNotifications returns all received session notifications.
 func (c *TestClient) GetSessionNotifications() []api.SessionNotification {
-	c.sessionMu.RLock()
-	defer c.sessionMu.RUnlock()
-	result := make([]api.SessionNotification, len(c.sessionNotifications))
-	copy(result, c.sessionNotifications)
-	return result
+	return c.sessionNotifications.GetAll()
 }
 
 // SetShouldError configures whether a method should return an error.
 func (c *TestClient) SetShouldError(method string, shouldError bool) {
-	c.shouldErrorMu.Lock()
-	defer c.shouldErrorMu.Unlock()
-	c.shouldError[method] = shouldError
+	c.shouldError.Store(method, shouldError)
 }
 
 func (c *TestClient) checkShouldError(method string) bool {
-	c.shouldErrorMu.RLock()
-	defer c.shouldErrorMu.RUnlock()
-	return c.shouldError[method]
+	value, _ := c.shouldError.Load(method)
+	return value
 }
 
 // Handler implementations.
@@ -109,9 +84,7 @@ func (c *TestClient) HandleFsReadTextFile(
 		return nil, &api.ACPError{Code: api.ErrorCodeNotFound, Message: "File not found"}
 	}
 
-	c.fileContentsMu.RLock()
-	content, exists := c.fileContents[params.Path]
-	c.fileContentsMu.RUnlock()
+	content, exists := c.fileContents.Load(params.Path)
 
 	if !exists {
 		content = "default content"
@@ -127,9 +100,7 @@ func (c *TestClient) HandleFsWriteTextFile(_ context.Context, params *api.WriteT
 		return &api.ACPError{Code: api.ErrorCodeForbidden, Message: "Write not allowed"}
 	}
 
-	c.writtenFilesMu.Lock()
-	defer c.writtenFilesMu.Unlock()
-	c.writtenFiles = append(c.writtenFiles, FileWrite{
+	c.writtenFiles.Append(FileWrite{
 		Path:    params.Path,
 		Content: params.Content,
 	})
@@ -145,10 +116,7 @@ func (c *TestClient) HandleRequestPermission(
 		return nil, &api.ACPError{Code: api.ErrorCodeUnauthorized, Message: "Permission denied"}
 	}
 
-	c.permissionMu.Lock()
-	defer c.permissionMu.Unlock()
-
-	if len(c.permissionResponses) == 0 {
+	if c.permissionResponses.Len() == 0 {
 		// Default response - cancelled (indicating no specific selection made).
 		return &api.RequestPermissionResponse{
 			Outcome: map[string]interface{}{
@@ -158,8 +126,15 @@ func (c *TestClient) HandleRequestPermission(
 	}
 
 	// Pop first queued response.
-	response := c.permissionResponses[0]
-	c.permissionResponses = c.permissionResponses[1:]
+	response, exists := c.permissionResponses.Get(0)
+	if !exists {
+		return &api.RequestPermissionResponse{
+			Outcome: map[string]interface{}{
+				"outcome": "cancelled",
+			},
+		}, nil
+	}
+	c.permissionResponses.Remove(0)
 	return &response, nil
 }
 
@@ -168,9 +143,7 @@ func (c *TestClient) HandleSessionUpdate(_ context.Context, params *api.SessionN
 		return &api.ACPError{Code: api.ErrorCodeInternalServerError, Message: "Update failed"}
 	}
 
-	c.sessionMu.Lock()
-	defer c.sessionMu.Unlock()
-	c.sessionNotifications = append(c.sessionNotifications, *params)
+	c.sessionNotifications.Append(*params)
 
 	return nil
 }
@@ -186,13 +159,11 @@ func (c *TestClient) HandleTerminalCreate(
 	terminalID := atomic.AddInt64(&c.terminalIDs, 1)
 	terminalIDStr := fmt.Sprintf("term-%d", terminalID)
 
-	c.terminalsMu.Lock()
-	defer c.terminalsMu.Unlock()
-	c.terminals[terminalIDStr] = &TestTerminal{
+	c.terminals.Store(terminalIDStr, &TestTerminal{
 		ID:       terminalIDStr,
 		Commands: make([]string, 0),
 		Outputs:  make([]string, 0),
-	}
+	})
 
 	return &api.CreateTerminalResponse{
 		TerminalId: terminalIDStr,
@@ -214,9 +185,7 @@ func (c *TestClient) HandleTerminalRelease(_ context.Context, params *api.Releas
 	}
 
 	// Remove terminal.
-	c.terminalsMu.Lock()
-	defer c.terminalsMu.Unlock()
-	delete(c.terminals, string(params.SessionId))
+	c.terminals.Delete(string(params.SessionId))
 
 	return nil
 }
@@ -229,9 +198,7 @@ func (c *TestClient) HandleTerminalWaitForExit(
 		return nil, &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Terminal not found"}
 	}
 
-	c.terminalsMu.RLock()
-	terminal, exists := c.terminals[string(params.SessionId)]
-	c.terminalsMu.RUnlock()
+	terminal, exists := c.terminals.Load(string(params.SessionId))
 
 	if !exists {
 		return nil, &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Terminal not found"}
@@ -286,9 +253,7 @@ func NewPromptResponseRefusal() *api.PromptResponse {
 }
 
 func (c *TestClient) SetTerminalExitCode(sessionID string, exitCode *int) {
-	c.terminalsMu.Lock()
-	defer c.terminalsMu.Unlock()
-	if terminal, exists := c.terminals[sessionID]; exists {
+	if terminal, exists := c.terminals.Load(sessionID); exists {
 		terminal.ExitCode = exitCode
 	}
 }

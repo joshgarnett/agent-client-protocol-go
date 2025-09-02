@@ -3,32 +3,22 @@ package acp
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
+	"github.com/joshgarnett/agent-client-protocol-go/util"
 )
 
 // TestAgent implements a mock agent for testing.
 type TestAgent struct {
-	sessions       map[string]*TestSession
-	sessionsMu     sync.RWMutex
-	sessionCounter int64
-
-	promptsReceived []PromptReceived
-	promptsMu       sync.RWMutex
-
-	cancellationsReceived []string
-	cancellationsMu       sync.RWMutex
-
-	authenticated bool
-	authMu        sync.RWMutex
-
-	shouldError   map[string]bool
-	shouldErrorMu sync.RWMutex
-
-	capabilities api.AgentCapabilities
-	authMethods  []api.AuthMethod
+	sessions              *util.SyncMap[string, *TestSession]
+	sessionCounter        int64
+	promptsReceived       *util.SyncSlice[PromptReceived]
+	cancellationsReceived *util.SyncSlice[string]
+	authenticated         *util.AtomicValue[bool]
+	shouldError           *util.SyncMap[string, bool]
+	capabilities          api.AgentCapabilities
+	authMethods           []api.AuthMethod
 }
 
 type TestSession struct {
@@ -44,10 +34,11 @@ type PromptReceived struct {
 // NewTestAgent creates a new test agent.
 func NewTestAgent() *TestAgent {
 	return &TestAgent{
-		sessions:              make(map[string]*TestSession),
-		promptsReceived:       make([]PromptReceived, 0),
-		cancellationsReceived: make([]string, 0),
-		shouldError:           make(map[string]bool),
+		sessions:              util.NewSyncMap[string, *TestSession](),
+		promptsReceived:       util.NewSyncSlice[PromptReceived](),
+		cancellationsReceived: util.NewSyncSlice[string](),
+		authenticated:         util.NewAtomicValue[bool](false),
+		shouldError:           util.NewSyncMap[string, bool](),
 		capabilities: api.AgentCapabilities{
 			LoadSession:        true,
 			PromptCapabilities: api.PromptCapabilities{},
@@ -64,38 +55,22 @@ func NewTestAgent() *TestAgent {
 
 // GetSessions returns all created sessions.
 func (a *TestAgent) GetSessions() map[string]*TestSession {
-	a.sessionsMu.RLock()
-	defer a.sessionsMu.RUnlock()
-	result := make(map[string]*TestSession)
-	for k, v := range a.sessions {
-		result[k] = v
-	}
-	return result
+	return a.sessions.GetAll()
 }
 
 // GetPromptsReceived returns all prompts received.
 func (a *TestAgent) GetPromptsReceived() []PromptReceived {
-	a.promptsMu.RLock()
-	defer a.promptsMu.RUnlock()
-	result := make([]PromptReceived, len(a.promptsReceived))
-	copy(result, a.promptsReceived)
-	return result
+	return a.promptsReceived.GetAll()
 }
 
 // GetCancellationsReceived returns all cancellations received.
 func (a *TestAgent) GetCancellationsReceived() []string {
-	a.cancellationsMu.RLock()
-	defer a.cancellationsMu.RUnlock()
-	result := make([]string, len(a.cancellationsReceived))
-	copy(result, a.cancellationsReceived)
-	return result
+	return a.cancellationsReceived.GetAll()
 }
 
 // SetShouldError configures whether a method should return an error.
 func (a *TestAgent) SetShouldError(method string, shouldError bool) {
-	a.shouldErrorMu.Lock()
-	defer a.shouldErrorMu.Unlock()
-	a.shouldError[method] = shouldError
+	a.shouldError.Store(method, shouldError)
 }
 
 // SetCapabilities sets the agent capabilities.
@@ -109,9 +84,8 @@ func (a *TestAgent) SetAuthMethods(methods []api.AuthMethod) {
 }
 
 func (a *TestAgent) checkShouldError(method string) bool {
-	a.shouldErrorMu.RLock()
-	defer a.shouldErrorMu.RUnlock()
-	return a.shouldError[method]
+	value, _ := a.shouldError.Load(method)
+	return value
 }
 
 func (a *TestAgent) HandleInitialize(
@@ -134,9 +108,7 @@ func (a *TestAgent) HandleAuthenticate(_ context.Context, _ *api.AuthenticateReq
 		return &api.ACPError{Code: api.ErrorCodeUnauthorized, Message: "Authentication failed"}
 	}
 
-	a.authMu.Lock()
-	defer a.authMu.Unlock()
-	a.authenticated = true
+	a.authenticated.Store(true)
 
 	return nil
 }
@@ -156,9 +128,7 @@ func (a *TestAgent) HandleSessionNew(
 		CWD: params.Cwd,
 	}
 
-	a.sessionsMu.Lock()
-	defer a.sessionsMu.Unlock()
-	a.sessions[sessionID] = session
+	a.sessions.Store(sessionID, session)
 
 	return &api.NewSessionResponse{
 		SessionId: api.SessionId(sessionID),
@@ -171,9 +141,7 @@ func (a *TestAgent) HandleSessionLoad(_ context.Context, params *api.LoadSession
 	}
 
 	// For testing, we just verify the session exists.
-	a.sessionsMu.RLock()
-	_, exists := a.sessions[string(params.SessionId)]
-	a.sessionsMu.RUnlock()
+	_, exists := a.sessions.Load(string(params.SessionId))
 
 	if !exists {
 		return &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Session not found"}
@@ -187,12 +155,10 @@ func (a *TestAgent) HandleSessionPrompt(_ context.Context, params *api.PromptReq
 		return nil, &api.ACPError{Code: api.ErrorCodeInternalServerError, Message: "Prompt processing failed"}
 	}
 
-	a.promptsMu.Lock()
-	a.promptsReceived = append(a.promptsReceived, PromptReceived{
+	a.promptsReceived.Append(PromptReceived{
 		SessionID: string(params.SessionId),
 		Prompt:    params.Prompt,
 	})
-	a.promptsMu.Unlock()
 
 	return &api.PromptResponse{
 		StopReason: "end_turn",
@@ -204,16 +170,12 @@ func (a *TestAgent) HandleSessionCancel(_ context.Context, params *api.CancelNot
 		return &api.ACPError{Code: api.ErrorCodeNotFound, Message: "Session not found"}
 	}
 
-	a.cancellationsMu.Lock()
-	a.cancellationsReceived = append(a.cancellationsReceived, string(params.SessionId))
-	a.cancellationsMu.Unlock()
+	a.cancellationsReceived.Append(string(params.SessionId))
 
 	return nil
 }
 
 // IsAuthenticated returns whether the agent is authenticated.
 func (a *TestAgent) IsAuthenticated() bool {
-	a.authMu.RLock()
-	defer a.authMu.RUnlock()
-	return a.authenticated
+	return a.authenticated.Load()
 }
