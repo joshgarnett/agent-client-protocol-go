@@ -17,8 +17,8 @@ coverage.*
 *.coverprofile
 profile.cov
 
-# Dependency directories (remove the comment below to include it)
 vendor/
+reference/
 
 # Go workspace file
 go.work
@@ -39,4 +39,3 @@ bin/
 /client
 examples/agent/agent
 examples/client/client
-reference/

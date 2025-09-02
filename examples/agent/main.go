@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/joshgarnett/agent-client-protocol-go/acp"
@@ -21,6 +23,9 @@ const (
 	progressUpdateDelay  = 500
 	finalProcessDelay    = 400
 	toolExecutionDelay   = 1000
+
+	// Content display limits.
+	maxDisplayContentLength = 200
 )
 
 // stdioReadWriteCloser combines stdin and stdout into a ReadWriteCloser.
@@ -33,11 +38,52 @@ func (s stdioReadWriteCloser) Close() error {
 	return nil
 }
 
+// discoverTestFiles finds ACP test files created by the client.
+func discoverTestFiles() ([]string, error) {
+	tempDir := os.TempDir()
+	patterns := []string{
+		"acp_test_input_*.txt",
+		"acp_project_info_*.md",
+	}
+
+	var files []string
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(filepath.Join(tempDir, pattern))
+		if err != nil {
+			return nil, fmt.Errorf("failed to glob pattern %s: %w", pattern, err)
+		}
+		files = append(files, matches...)
+	}
+
+	return files, nil
+}
+
+// discoverOutputFilePath finds the output file path created by the client.
+func discoverOutputFilePath() (string, error) {
+	tempDir := os.TempDir()
+	pattern := "acp_agent_output_*.json"
+
+	matches, err := filepath.Glob(filepath.Join(tempDir, pattern))
+	if err != nil {
+		return "", fmt.Errorf("failed to glob output file pattern: %w", err)
+	}
+
+	if len(matches) == 0 {
+		// Return a default temp file path if no existing one is found
+		return filepath.Join(tempDir, "acp_agent_output.json"), nil
+	}
+
+	return matches[0], nil
+}
+
 // activePrompts tracks ongoing prompts for cancellation support.
 var activePrompts = util.NewSyncMap[string, context.CancelFunc]()
 
 // Global agent connection for handlers that need it
 var agentConn *acp.AgentConnection
+
+// Global client capabilities received during initialization
+var clientCapabilities *api.ClientCapabilities
 
 // Example agent demonstrates ACP agent implementation with session management,
 // tool calls, permission handling, and cancellation support.
@@ -83,6 +129,17 @@ func main() {
 func handleInitialize(_ context.Context, params *api.InitializeRequest) (*api.InitializeResponse, error) {
 	log.Printf("[INIT] Received initialize request from client (protocol v%d)\n", params.ProtocolVersion)
 	log.Printf("[INIT] Client capabilities: %+v\n", params.ClientCapabilities)
+
+	// Store client capabilities globally for use in file operations
+	clientCapabilities = &params.ClientCapabilities
+
+	// Log what file operations the client supports
+	if clientCapabilities.Fs.ReadTextFile {
+		log.Println("[INIT] Client supports file reading")
+	}
+	if clientCapabilities.Fs.WriteTextFile {
+		log.Println("[INIT] Client supports file writing")
+	}
 
 	// Return our capabilities to the client.
 	response := &api.InitializeResponse{
@@ -196,11 +253,8 @@ func simulateAgentTurn(
 		return api.StopReasonCancelled, simErr
 	}
 
-	// Step 2: Tool call that doesn't require permission
-	toolErr := simulateToolCall(
-		ctx, conn, params.SessionId, "call_1",
-		"Reading project files", api.ToolKindRead, false,
-	)
+	// Step 2: Actual file reading operation
+	toolErr := performFileReadOperation(ctx, conn, params.SessionId, "call_1")
 	if toolErr != nil {
 		if ctx.Err() == context.Canceled {
 			return api.StopReasonCancelled, nil
@@ -223,11 +277,8 @@ func simulateAgentTurn(
 		return api.StopReasonCancelled, simErr
 	}
 
-	// Step 4: Tool call that requires user permission
-	toolErr = simulateToolCall(
-		ctx, conn, params.SessionId, "call_2",
-		"Modifying configuration file", api.ToolKindEdit, true,
-	)
+	// Step 4: Actual file writing operation (with permission)
+	toolErr = performFileWriteOperation(ctx, conn, params.SessionId, "call_2")
 	if toolErr != nil {
 		if ctx.Err() == context.Canceled {
 			return api.StopReasonCancelled, nil
@@ -265,143 +316,309 @@ func sendAgentMessage(ctx context.Context, conn *acp.AgentConnection, sessionID 
 	return nil
 }
 
-// simulateToolCall demonstrates the tool call lifecycle with optional permission requests.
-func simulateToolCall(
+// simulateProcessing adds realistic delays with cancellation support.
+func simulateProcessing(ctx context.Context, delayMs int) error {
+	select {
+	case <-time.After(time.Duration(delayMs) * time.Millisecond):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// performFileReadOperation demonstrates actual file reading using the agent connection.
+func performFileReadOperation(
+	ctx context.Context,
+	conn *acp.AgentConnection,
+	sessionID api.SessionId,
+	toolCallID string,
+) error {
+	log.Printf("[FILE] Starting file read operation (%s)\n", toolCallID)
+
+	// Step 1: Check if client supports file reading
+	if clientCapabilities == nil || !clientCapabilities.Fs.ReadTextFile {
+		log.Printf("[FILE] Client does not support file reading, skipping operation\n")
+		return sendToolCallComplete(
+			ctx, conn, sessionID, toolCallID,
+			"Reading project files (skipped)",
+			"Client does not support file reading", "")
+	}
+
+	// Step 2: Send tool call start notification
+	if err := sendToolCallStart(ctx, conn, sessionID, toolCallID, "Reading project files", api.ToolKindRead); err != nil {
+		return err
+	}
+
+	// Step 3: Discover and read test files that the client created
+	filesToRead, err := discoverTestFiles()
+	if err != nil {
+		log.Printf("[FILE] Failed to discover test files: %v\n", err)
+		// Continue with empty list
+		filesToRead = []string{}
+	}
+
+	var filesRead []string
+	var totalContent strings.Builder
+
+	for _, filePath := range filesToRead {
+		log.Printf("[FILE] Attempting to read: %s\n", filePath)
+
+		response, readErr := conn.FsReadTextFile(ctx, &api.ReadTextFileRequest{
+			SessionId: sessionID,
+			Path:      filePath,
+		})
+
+		if readErr != nil {
+			log.Printf("[FILE] Failed to read %s: %v\n", filePath, readErr)
+			continue // Skip files that can't be read
+		}
+
+		log.Printf("[FILE] Successfully read %s (%d bytes)\n", filePath, len(response.Content))
+		filesRead = append(filesRead, filePath)
+
+		// Truncate content for display but keep full content for processing
+		displayContent := response.Content
+		if len(displayContent) > maxDisplayContentLength {
+			displayContent = displayContent[:maxDisplayContentLength] + "... (truncated)"
+		}
+		totalContent.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", filePath, displayContent))
+	}
+
+	// Step 4: Send tool call completion with results
+	var resultMessage string
+	if len(filesRead) > 0 {
+		resultMessage = fmt.Sprintf("Successfully read %d files: %v", len(filesRead), filesRead)
+	} else {
+		resultMessage = "No test files could be read - client may not have created them yet"
+	}
+
+	return sendToolCallComplete(
+		ctx,
+		conn,
+		sessionID,
+		toolCallID,
+		"Reading project files",
+		resultMessage,
+		totalContent.String(),
+	)
+}
+
+// performFileWriteOperation demonstrates actual file writing with permission request.
+func performFileWriteOperation(
+	ctx context.Context,
+	conn *acp.AgentConnection,
+	sessionID api.SessionId,
+	toolCallID string,
+) error {
+	log.Printf("[FILE] Starting file write operation (%s)\n", toolCallID)
+
+	// Step 1: Check if client supports file writing
+	if clientCapabilities == nil || !clientCapabilities.Fs.WriteTextFile {
+		log.Printf("[FILE] Client does not support file writing, skipping operation\n")
+		return sendToolCallComplete(
+			ctx,
+			conn,
+			sessionID,
+			toolCallID,
+			"Writing configuration file (skipped)",
+			"Client does not support file writing",
+			"",
+		)
+	}
+
+	// Step 2: Send tool call start notification
+	if err := sendToolCallStart(ctx, conn, sessionID, toolCallID, "Writing configuration file", api.ToolKindEdit); err != nil {
+		return err
+	}
+
+	// Step 3: Request permission for the file write operation
+	granted, err := requestFileWritePermission(ctx, conn, sessionID, toolCallID)
+	if err != nil {
+		return fmt.Errorf("permission request failed: %w", err)
+	}
+
+	if !granted {
+		log.Printf("[FILE] Permission denied for file write operation\n")
+		return sendToolCallComplete(
+			ctx,
+			conn,
+			sessionID,
+			toolCallID,
+			"Writing configuration file (skipped)",
+			"Permission denied",
+			"",
+		)
+	}
+
+	// Step 4: Write the configuration file
+	configPath, err := discoverOutputFilePath()
+	if err != nil {
+		log.Printf("[FILE] Failed to discover output file path: %v\n", err)
+		return sendToolCallComplete(
+			ctx,
+			conn,
+			sessionID,
+			toolCallID,
+			"Writing configuration file (failed)",
+			"Failed to determine output path",
+			"",
+		)
+	}
+	configContent := fmt.Sprintf(`{
+  "agent_id": "example-agent",
+  "session_id": "%s",
+  "timestamp": "%s",
+  "version": "1.0.0",
+  "operation": "file_write_test",
+  "settings": {
+    "debug": true,
+    "max_retries": 3,
+    "test_mode": true
+  },
+  "capabilities_received": {
+    "fs_read": %t,
+    "fs_write": %t
+  }
+}`, sessionID, time.Now().Format(time.RFC3339), clientCapabilities.Fs.ReadTextFile, clientCapabilities.Fs.WriteTextFile)
+
+	log.Printf("[FILE] Writing configuration to: %s\n", configPath)
+
+	err = conn.FsWriteTextFile(ctx, &api.WriteTextFileRequest{
+		SessionId: sessionID,
+		Path:      configPath,
+		Content:   configContent,
+	})
+
+	if err != nil {
+		log.Printf("[FILE] Failed to write %s: %v\n", configPath, err)
+		return sendToolCallComplete(
+			ctx,
+			conn,
+			sessionID,
+			toolCallID,
+			"Writing configuration file (failed)",
+			fmt.Sprintf("Write failed: %v", err),
+			"",
+		)
+	}
+
+	log.Printf("[FILE] Successfully wrote configuration file: %s\n", configPath)
+	return sendToolCallComplete(
+		ctx,
+		conn,
+		sessionID,
+		toolCallID,
+		"Writing configuration file (completed)",
+		fmt.Sprintf("Successfully wrote %s (%d bytes)", configPath, len(configContent)),
+		configContent[:minInt(maxDisplayContentLength, len(configContent))],
+	)
+}
+
+// sendToolCallStart sends a tool call start notification.
+func sendToolCallStart(
 	ctx context.Context,
 	conn *acp.AgentConnection,
 	sessionID api.SessionId,
 	toolCallID, title string,
 	kind api.ToolKind,
-	needsPermission bool,
 ) error {
-	// Step 1: Send initial tool call notification
 	toolStatus := api.ToolCallStatusPending
-	location := api.ToolCallLocation{Path: "/project/config.json"}
+	location := api.ToolCallLocation{Path: "/project/"}
 
 	toolCall := api.NewSessionUpdateToolCall(
 		[]interface{}{}, // initial content empty
 		&kind,
-		[]interface{}{location}, // convert to []interface{}
-		map[string]interface{}{"path": "/project/config.json", "operation": title},
+		[]interface{}{location},
+		map[string]interface{}{"operation": title},
 		nil, // rawOutput - nil initially
 		&toolStatus,
 		title,
-		(*api.ToolCallId)(&toolCallID), // convert to ToolCallId type
+		(*api.ToolCallId)(&toolCallID),
 	)
 
-	err := conn.SendSessionUpdate(ctx, &api.SessionNotification{
+	return conn.SendSessionUpdate(ctx, &api.SessionNotification{
 		SessionId: sessionID,
 		Update:    toolCall,
 	})
-	if err != nil {
-		return fmt.Errorf("failed to send tool call: %w", err)
-	}
-
-	log.Printf("[TOOL] Started tool call '%s' (%s)\n", title, toolCallID)
-
-	// Step 2: If permission is needed, request it
-	if needsPermission {
-		permissionGranted, permErr := requestPermission(ctx, conn, sessionID, toolCallID, title, kind, location)
-		if permErr != nil {
-			return fmt.Errorf("permission request failed: %w", permErr)
-		}
-
-		if !permissionGranted {
-			// Send tool call update showing it was skipped
-			skippedStatus := api.ToolCallStatusCompleted
-			skippedUpdate := api.NewSessionUpdateToolCallUpdate(
-				[]interface{}{}, // content
-				nil,             // kind
-				nil,             // locations
-				nil,             // rawInput
-				map[string]interface{}{"skipped": true, "reason": "permission denied"}, // rawOutput
-				&skippedStatus,                 // status
-				title+" (skipped)",             // title
-				(*api.ToolCallId)(&toolCallID), // toolCallID
-			)
-
-			return conn.SendSessionUpdate(ctx, &api.SessionNotification{
-				SessionId: sessionID,
-				Update:    skippedUpdate,
-			})
-		}
-	}
-
-	// Step 3: Simulate tool execution
-	if simErr := simulateProcessing(ctx, toolExecutionDelay); simErr != nil {
-		return simErr
-	}
-
-	// Step 4: Send completion update
-	completedStatus := api.ToolCallStatusCompleted
-	successText := api.NewContentBlockText(nil, "Operation completed successfully")
-
-	toolCallUpdate := api.NewSessionUpdateToolCallUpdate(
-		[]interface{}{*successText}, // content
-		nil,                         // kind
-		nil,                         // locations
-		nil,                         // rawInput
-		map[string]interface{}{"success": true, "message": "File updated successfully"}, // rawOutput
-		&completedStatus,               // status
-		title+" (completed)",           // title
-		(*api.ToolCallId)(&toolCallID), // toolCallID
-	)
-
-	err = conn.SendSessionUpdate(ctx, &api.SessionNotification{
-		SessionId: sessionID,
-		Update:    toolCallUpdate,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to send tool call update: %w", err)
-	}
-
-	log.Printf("[TOOL] Completed tool call '%s' (%s)\n", title, toolCallID)
-	return nil
 }
 
-// requestPermission requests user permission for sensitive operations.
-func requestPermission(
+// sendToolCallComplete sends a tool call completion notification.
+func sendToolCallComplete(
 	ctx context.Context,
 	conn *acp.AgentConnection,
 	sessionID api.SessionId,
-	toolCallID, title string,
-	kind api.ToolKind,
-	location api.ToolCallLocation,
-) (bool, error) {
-	log.Printf("[PERMISSION] Requesting permission for: %s\n", title)
+	toolCallID, title, message, content string,
+) error {
+	completedStatus := api.ToolCallStatusCompleted
+	var contentBlocks []interface{}
 
-	// Create the tool call structure for the permission request
-	toolStatus := api.ToolCallStatusPending
-	toolCallForPermission := api.ToolCallUpdate{
-		Kind:       &kind,
-		Status:     toolStatus,
-		Title:      &title,
-		ToolCallId: api.ToolCallId(toolCallID),
-		Locations:  []api.ToolCallLocation{location},
-		RawInput: map[string]interface{}{
-			"path":      location.Path,
-			"operation": title,
-		},
+	if message != "" {
+		textBlock := api.NewContentBlockText(nil, message)
+		contentBlocks = append(contentBlocks, *textBlock)
 	}
+
+	toolCallUpdate := api.NewSessionUpdateToolCallUpdate(
+		contentBlocks,
+		nil, // kind
+		nil, // locations
+		nil, // rawInput
+		map[string]interface{}{"success": true, "content": content}, // rawOutput
+		&completedStatus,
+		title+" (completed)",
+		(*api.ToolCallId)(&toolCallID),
+	)
+
+	return conn.SendSessionUpdate(ctx, &api.SessionNotification{
+		SessionId: sessionID,
+		Update:    toolCallUpdate,
+	})
+}
+
+// requestFileWritePermission requests permission for file write operations.
+func requestFileWritePermission(
+	ctx context.Context,
+	conn *acp.AgentConnection,
+	sessionID api.SessionId,
+	toolCallID string,
+) (bool, error) {
+	log.Printf("[PERMISSION] Requesting write permission for tool call: %s\n", toolCallID)
 
 	// Create permission options
 	allowOption := api.PermissionOption{
 		Kind:     api.PermissionOptionKindAllowOnce,
-		Name:     "Allow this change",
+		Name:     "Allow file write",
 		OptionId: api.PermissionOptionId("allow"),
 	}
 
 	rejectOption := api.PermissionOption{
 		Kind:     api.PermissionOptionKindRejectOnce,
-		Name:     "Skip this change",
+		Name:     "Skip file write",
 		OptionId: api.PermissionOptionId("reject"),
 	}
 
-	// Make the permission request. This is safe to call from a handler because the
-	// underlying `golang.org/x/exp/jsonrpc2` library supports re-entrant calls.
+	// Create tool call for permission request
+	configPath, err := discoverOutputFilePath()
+	if err != nil {
+		log.Printf("[FILE] Failed to discover output file path for permission request: %v\n", err)
+		configPath = "/tmp/acp_agent_output.json" // fallback
+	}
+	toolCall := api.ToolCallUpdate{
+		Kind:       api.ToolKindEdit,
+		Status:     api.ToolCallStatusPending,
+		Title:      stringPtr("Writing configuration file"),
+		ToolCallId: api.ToolCallId(toolCallID),
+		Locations:  []api.ToolCallLocation{{Path: configPath}},
+		RawInput: map[string]interface{}{
+			"path":      configPath,
+			"operation": "write configuration",
+			"test_mode": true,
+		},
+	}
+
+	// Make the permission request
 	permissionRequest := &api.RequestPermissionRequest{
 		SessionId: sessionID,
-		ToolCall:  toolCallForPermission,
+		ToolCall:  toolCall,
 		Options:   []api.PermissionOption{allowOption, rejectOption},
 	}
 
@@ -410,19 +627,19 @@ func requestPermission(
 		return false, fmt.Errorf("permission request call failed: %w", err)
 	}
 
-	// Parse the response - Outcome is an interface{} that should be a map
+	// Parse the response
 	outcomeMap, ok := response.Outcome.(map[string]interface{})
 	if !ok {
-		return false, errors.New("invalid permission response format: outcome is not a map")
+		return false, errors.New("invalid permission response format")
 	}
 
 	outcome, ok := outcomeMap["outcome"].(string)
 	if !ok {
-		return false, errors.New("invalid permission response format: outcome field missing or not string")
+		return false, errors.New("invalid permission response format")
 	}
 
 	if outcome == "cancelled" {
-		log.Printf("[PERMISSION] Permission request was cancelled\n")
+		log.Printf("[PERMISSION] Request was cancelled\n")
 		return false, nil
 	}
 
@@ -441,12 +658,14 @@ func requestPermission(
 	return false, fmt.Errorf("unexpected permission outcome: %s", outcome)
 }
 
-// simulateProcessing adds realistic delays with cancellation support.
-func simulateProcessing(ctx context.Context, delayMs int) error {
-	select {
-	case <-time.After(time.Duration(delayMs) * time.Millisecond):
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+// Helper functions
+func minInt(a, b int) int {
+	if a < b {
+		return a
 	}
+	return b
+}
+
+func stringPtr(s string) *string {
+	return &s
 }

@@ -116,3 +116,74 @@ func (a *AgentConnection) SessionRequestPermission(
 func (a *AgentConnection) SendSessionUpdate(ctx context.Context, params *api.SessionNotification) error {
 	return a.core.Notify(ctx, api.MethodSessionUpdate, params)
 }
+
+// Client method helpers - these are methods the Agent calls on the Client.
+
+// FsReadTextFile sends a fs/read_text_file request to the client.
+func (a *AgentConnection) FsReadTextFile(
+	ctx context.Context,
+	params *api.ReadTextFileRequest,
+) (*api.ReadTextFileResponse, error) {
+	var result api.ReadTextFileResponse
+	err := a.core.Call(ctx, api.MethodFsReadTextFile, params, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// FsWriteTextFile sends a fs/write_text_file request to the client.
+func (a *AgentConnection) FsWriteTextFile(ctx context.Context, params *api.WriteTextFileRequest) error {
+	return a.core.Call(ctx, api.MethodFsWriteTextFile, params, nil)
+}
+
+// Terminal method helpers - these are experimental/unstable methods the Agent calls on the Client.
+
+// TerminalCreate sends a terminal/create request to the client.
+func (a *AgentConnection) TerminalCreate(
+	ctx context.Context,
+	params *api.CreateTerminalRequest,
+) (*api.CreateTerminalResponse, error) {
+	var result api.CreateTerminalResponse
+	err := a.core.Call(ctx, api.MethodTerminalCreate, params, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TerminalOutput sends a terminal/output request to the client.
+func (a *AgentConnection) TerminalOutput(
+	ctx context.Context,
+	params *api.TerminalOutputRequest,
+) (*api.TerminalOutputResponse, error) {
+	var result api.TerminalOutputResponse
+	err := a.core.Call(ctx, api.MethodTerminalOutput, params, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TerminalRelease sends a terminal/release request to the client.
+func (a *AgentConnection) TerminalRelease(ctx context.Context, params *api.ReleaseTerminalRequest) error {
+	return a.core.Call(ctx, api.MethodTerminalRelease, params, nil)
+}
+
+// TerminalWaitForExit sends a terminal/wait_for_exit request to the client.
+func (a *AgentConnection) TerminalWaitForExit(
+	ctx context.Context,
+	params *api.WaitForTerminalExitRequest,
+) (*api.WaitForTerminalExitResponse, error) {
+	var result api.WaitForTerminalExitResponse
+	err := a.core.Call(ctx, api.MethodTerminalWaitForExit, params, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TerminalKill sends a terminal/kill request to the client.
+func (a *AgentConnection) TerminalKill(ctx context.Context, params *api.KillTerminalRequest) error {
+	return a.core.Call(ctx, api.MethodTerminalKill, params, nil)
+}

@@ -14,15 +14,16 @@ import (
 //
 // This follows the pattern from the TypeScript reference implementation, providing
 // a handle-based approach to terminal management with automatic resource cleanup.
+// Terminals are created and managed by agents, so the handle uses AgentConnection.
 type TerminalHandle struct {
 	ID        string
 	sessionID api.SessionId
-	conn      *ClientConnection
+	conn      *AgentConnection
 	released  atomic.Bool
 }
 
 // NewTerminalHandle creates a new terminal handle.
-func NewTerminalHandle(id string, sessionID api.SessionId, conn *ClientConnection) *TerminalHandle {
+func NewTerminalHandle(id string, sessionID api.SessionId, conn *AgentConnection) *TerminalHandle {
 	return &TerminalHandle{
 		ID:        id,
 		sessionID: sessionID,
@@ -33,9 +34,9 @@ func NewTerminalHandle(id string, sessionID api.SessionId, conn *ClientConnectio
 // CurrentOutput gets the current output from the terminal.
 //
 // Returns an error if the terminal handle has been released.
-func (th *TerminalHandle) CurrentOutput(ctx context.Context) error {
+func (th *TerminalHandle) CurrentOutput(ctx context.Context) (*api.TerminalOutputResponse, error) {
 	if th.released.Load() {
-		return errors.New("terminal handle has been released")
+		return nil, errors.New("terminal handle has been released")
 	}
 
 	return th.conn.TerminalOutput(ctx, &api.TerminalOutputRequest{
@@ -75,6 +76,20 @@ func (th *TerminalHandle) Release(ctx context.Context) error {
 	return err
 }
 
+// Kill terminates the terminal process.
+//
+// Returns an error if the terminal handle has been released.
+func (th *TerminalHandle) Kill(ctx context.Context) error {
+	if th.released.Load() {
+		return errors.New("terminal handle has been released")
+	}
+
+	return th.conn.TerminalKill(ctx, &api.KillTerminalRequest{
+		SessionId:  th.sessionID,
+		TerminalId: th.ID,
+	})
+}
+
 // Close provides the standard Go Close pattern for resource cleanup.
 //
 // This is equivalent to calling Release with a background context.
@@ -91,14 +106,15 @@ func (th *TerminalHandle) IsReleased() bool {
 //
 // This provides centralized management and cleanup of terminal handles,
 // ensuring proper resource cleanup when sessions end.
+// Terminals are managed by agents, so the manager uses AgentConnection.
 type TerminalManager struct {
 	terminals *util.SyncMap[string, *TerminalHandle]
 	sessionID api.SessionId
-	conn      *ClientConnection
+	conn      *AgentConnection
 }
 
 // NewTerminalManager creates a new terminal manager for the given session.
-func NewTerminalManager(sessionID api.SessionId, conn *ClientConnection) *TerminalManager {
+func NewTerminalManager(sessionID api.SessionId, conn *AgentConnection) *TerminalManager {
 	return &TerminalManager{
 		terminals: util.NewSyncMap[string, *TerminalHandle](),
 		sessionID: sessionID,
@@ -180,20 +196,20 @@ func (tm *TerminalManager) Count() int {
 	return tm.terminals.Count()
 }
 
-// Enhanced ClientConnection methods
+// Enhanced AgentConnection methods
 
 // CreateTerminalWithHandle creates a new terminal and returns a handle for it.
 //
 // This is an enhanced version of the basic TerminalCreate method that returns
 // a handle for easier lifecycle management.
-func (c *ClientConnection) CreateTerminalWithHandle(ctx context.Context,
+func (a *AgentConnection) CreateTerminalWithHandle(ctx context.Context,
 	params *api.CreateTerminalRequest) (*TerminalHandle, error) {
-	response, err := c.TerminalCreate(ctx, params)
+	response, err := a.TerminalCreate(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewTerminalHandle(response.TerminalId, params.SessionId, c), nil
+	return NewTerminalHandle(response.TerminalId, params.SessionId, a), nil
 }
 
 // Session integration
@@ -201,11 +217,11 @@ func (c *ClientConnection) CreateTerminalWithHandle(ctx context.Context,
 // SessionTerminalManager integrates terminal management with session lifecycle.
 type SessionTerminalManager struct {
 	managers *util.SyncMap[api.SessionId, *TerminalManager]
-	conn     *ClientConnection
+	conn     *AgentConnection
 }
 
 // NewSessionTerminalManager creates a new session-level terminal manager.
-func NewSessionTerminalManager(conn *ClientConnection) *SessionTerminalManager {
+func NewSessionTerminalManager(conn *AgentConnection) *SessionTerminalManager {
 	return &SessionTerminalManager{
 		managers: util.NewSyncMap[api.SessionId, *TerminalManager](),
 		conn:     conn,

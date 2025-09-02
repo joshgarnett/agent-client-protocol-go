@@ -34,6 +34,13 @@ func (s stdioReadWriteCloser) Close() error {
 // Global input manager for handling all user input
 var inputManager *InputManager
 
+// Test file paths (set by createTestFiles)
+var (
+	testInputFile   string
+	testProjectFile string
+	testOutputFile  string
+)
+
 // setupAgent creates and starts the agent subprocess.
 func setupAgent(ctx context.Context, agentCmd string, agentArgs []string) (stdioReadWriteCloser, *exec.Cmd, error) {
 	fmt.Printf("[CLIENT] Starting agent: %s %v\n", agentCmd, agentArgs)
@@ -97,6 +104,130 @@ func initializeConnection(ctx context.Context, conn *acp.ClientConnection) (api.
 	return sessionResponse.SessionId, nil
 }
 
+// createTestFiles creates test files for the agent to read and demonstrate file operations.
+func createTestFiles() error {
+	fmt.Println("[CLIENT] Creating test files for agent demonstrations...")
+
+	// Create test input file
+	testInput := `# ACP Test Input File
+
+This file demonstrates the Agent Client Protocol file reading capability.
+
+## Project Information
+- Name: ACP Go Implementation Test
+- Purpose: Demonstrating agent-client file operations
+- Created: ` + time.Now().Format(time.RFC3339) + `
+
+## Test Content
+This content shows that the agent can successfully read files from the client's filesystem.
+The agent will process this file and potentially create new files based on its contents.
+
+## Features Demonstrated
+1. File system read operations
+2. Content analysis by agents
+3. Protocol-compliant file handling
+4. Cross-platform path handling
+
+Test data: Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+`
+
+	testFile, err := os.CreateTemp("", "acp_test_input_*.txt")
+	if err != nil {
+		return fmt.Errorf("failed to create temp test input file: %w", err)
+	}
+	_ = testFile.Close()
+	testInputFile = testFile.Name()
+
+	if writeErr := os.WriteFile(testInputFile, []byte(testInput), 0600); writeErr != nil {
+		return fmt.Errorf("failed to write test input file: %w", writeErr)
+	}
+
+	// Set output file path for the agent to write to
+	outputFile, err := os.CreateTemp("", "acp_agent_output_*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create temp output file: %w", err)
+	}
+	_ = outputFile.Close()
+	testOutputFile = outputFile.Name()
+
+	// Create project info file
+	projectInfo := fmt.Sprintf(`# ACP Go Implementation Project
+
+## Overview
+This is an example client-agent interaction using the Agent Client Protocol (ACP).
+
+## Files in this demonstration:
+- **%s**: Sample input file for agent to read
+- **%s**: This file with project information
+- **%s**: Output file created by the agent (after processing)
+
+## Protocol Flow
+1. Client advertises file system capabilities (read/write)
+2. Agent checks capabilities before making file operations
+3. Agent reads input files to understand context
+4. Agent requests permission for file writes
+5. Agent writes output files with processed information
+
+## Testing
+Run the client with: %s
+
+The agent will demonstrate:
+- Reading these test files
+- Processing the content
+- Writing configuration/output files
+- Proper permission handling
+`, testInputFile, testProjectFile, testOutputFile, "`go run ./examples/client ./examples/agent`")
+
+	projectFile, err := os.CreateTemp("", "acp_project_info_*.md")
+	if err != nil {
+		return fmt.Errorf("failed to create temp project info file: %w", err)
+	}
+	_ = projectFile.Close()
+	testProjectFile = projectFile.Name()
+
+	if writeErr := os.WriteFile(testProjectFile, []byte(projectInfo), 0600); writeErr != nil {
+		return fmt.Errorf("failed to write project info file: %w", writeErr)
+	}
+
+	fmt.Printf("[CLIENT] Created test files:\n")
+	fmt.Printf("  - %s (%d bytes)\n", testInputFile, len(testInput))
+	fmt.Printf("  - %s (%d bytes)\n", testProjectFile, len(projectInfo))
+	fmt.Printf("  - %s (ready for agent output)\n", testOutputFile)
+	fmt.Println("[CLIENT] Agent can now read these files during operation")
+
+	return nil
+}
+
+// cleanupTestFiles removes test files and shows what the agent created.
+func cleanupTestFiles() {
+	fmt.Println("\n[CLIENT] Checking agent output and cleaning up test files...")
+
+	// Check if agent created output file
+	if testOutputFile != "" {
+		if content, err := os.ReadFile(testOutputFile); err == nil {
+			fmt.Printf("[CLIENT] Agent successfully created output file (%d bytes):\n", len(content))
+			fmt.Printf("---\n%s\n---\n", string(content))
+		} else {
+			fmt.Printf("[CLIENT] Agent output file not found: %v\n", err)
+		}
+	}
+
+	// Clean up test files
+	testFiles := []string{
+		testInputFile,
+		testProjectFile,
+		testOutputFile,
+	}
+
+	for _, file := range testFiles {
+		if err := os.Remove(file); err != nil {
+			fmt.Printf("[CLIENT] Note: Could not remove %s: %v\n", file, err)
+		} else {
+			fmt.Printf("[CLIENT] Cleaned up: %s\n", file)
+		}
+	}
+}
+
 // runClient performs the main client logic and returns any error.
 func runClient() error {
 	if len(os.Args) < minRequiredArgs {
@@ -111,6 +242,11 @@ func runClient() error {
 	agentArgs := os.Args[2:]
 
 	ctx := context.Background()
+
+	// Create test files for agent to read
+	if err := createTestFiles(); err != nil {
+		return fmt.Errorf("failed to create test files: %w", err)
+	}
 
 	// Initialize input manager
 	inputManager = NewInputManager()
@@ -208,6 +344,10 @@ func runClient() error {
 	} else {
 		fmt.Println("[CLIENT] Agent process exited successfully")
 	}
+
+	// Show results and clean up test files
+	cleanupTestFiles()
+
 	return nil
 }
 
