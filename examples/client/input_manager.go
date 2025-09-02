@@ -10,19 +10,27 @@ import (
 	"sync"
 )
 
+// ============================================================================
+// Input Manager Configuration
+// ============================================================================
+
 const (
-	// requestBufferSize is the buffer size for input requests channel.
+	// requestBufferSize is the input request channel buffer size.
 	requestBufferSize = 10
 )
 
-// InputRequest represents a request for user input.
+// ============================================================================
+// Input Management Types and Implementation
+// ============================================================================
+
+// InputRequest represents a user input request.
 type InputRequest struct {
 	Prompt   string
-	Options  []string // If provided, user must choose from these options
+	Options  []string // Optional predefined choices
 	Response chan<- string
 }
 
-// InputManager handles all stdin input in a single goroutine to avoid conflicts.
+// InputManager serializes stdin input to avoid conflicts.
 type InputManager struct {
 	requests chan InputRequest
 	shutdown chan struct{}
@@ -31,7 +39,7 @@ type InputManager struct {
 	cancel   context.CancelFunc
 }
 
-// NewInputManager creates a new input manager.
+// NewInputManager creates an input manager.
 func NewInputManager() *InputManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &InputManager{
@@ -55,12 +63,12 @@ func (im *InputManager) Stop() {
 	im.wg.Wait()
 }
 
-// RequestInput requests input from the user with an optional prompt.
+// RequestInput requests user input with optional prompt.
 func (im *InputManager) RequestInput(prompt string) (string, error) {
 	return im.RequestInputWithOptions(prompt, nil)
 }
 
-// RequestInputWithOptions requests input with specific options.
+// RequestInputWithOptions requests input with predefined choices.
 func (im *InputManager) RequestInputWithOptions(prompt string, options []string) (string, error) {
 	response := make(chan string, 1)
 
@@ -84,7 +92,7 @@ func (im *InputManager) RequestInputWithOptions(prompt string, options []string)
 	}
 }
 
-// inputLoop processes input requests in a single goroutine.
+// inputLoop processes input requests sequentially.
 func (im *InputManager) inputLoop() {
 	defer im.wg.Done()
 
@@ -110,7 +118,7 @@ func (im *InputManager) inputLoop() {
 	}
 }
 
-// handleOptionSelection handles selection from multiple options.
+// handleOptionSelection prompts user to choose from options.
 func (im *InputManager) handleOptionSelection(scanner *bufio.Scanner, options []string) string {
 	fmt.Println()
 	for i, option := range options {
@@ -120,7 +128,7 @@ func (im *InputManager) handleOptionSelection(scanner *bufio.Scanner, options []
 
 	for {
 		if !scanner.Scan() {
-			// EOF or error - return first option as default
+			// EOF or error - use first option as default
 			if len(options) > 0 {
 				fmt.Printf("Defaulting to: %s\n", options[0])
 				return "1"
@@ -128,7 +136,7 @@ func (im *InputManager) handleOptionSelection(scanner *bufio.Scanner, options []
 			return ""
 		}
 
-		// Check for scan error
+		// Handle scan error
 		if scanner.Err() != nil {
 			if len(options) > 0 {
 				fmt.Printf("Input error, defaulting to: %s\n", options[0])
@@ -139,7 +147,7 @@ func (im *InputManager) handleOptionSelection(scanner *bufio.Scanner, options []
 
 		choice := strings.TrimSpace(scanner.Text())
 		if choice == "" {
-			// For option selection, don't accept empty input - ask again
+			// Require valid selection
 			fmt.Print("Choose an option (1-" + strconv.Itoa(len(options)) + "): ")
 			continue
 		}
@@ -155,33 +163,32 @@ func (im *InputManager) handleOptionSelection(scanner *bufio.Scanner, options []
 	}
 }
 
-// handleInputRequest processes a single input request.
+// handleInputRequest processes an input request.
 func (im *InputManager) handleInputRequest(scanner *bufio.Scanner, req InputRequest) string {
-	// Display prompt
+	// Show prompt
 	if req.Prompt != "" {
 		fmt.Print(req.Prompt)
 	}
 
-	// If options are provided, handle option selection
+	// Handle option selection if provided
 	if len(req.Options) > 0 {
 		return im.handleOptionSelection(scanner, req.Options)
 	}
 
-	// Simple text input
+	// Handle text input
 	if !scanner.Scan() {
-		// Check for scan error or EOF
+		// Handle scan error or EOF
 		if scanner.Err() != nil {
 			return ""
 		}
-		// EOF - return empty string
+		// EOF - return empty
 		return ""
 	}
 
 	text := strings.TrimSpace(scanner.Text())
-	// For regular prompts, don't accept empty input (except from EOF)
+	// Handle empty input
 	if text == "" {
-		// This was likely a pipe with single input followed by EOF
-		// Return empty to signal completion
+		// Pipe input completed
 		return ""
 	}
 	return text

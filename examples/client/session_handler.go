@@ -7,17 +7,25 @@ import (
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
 )
 
+// ============================================================================
+// Session Update Display Constants
+// ============================================================================
+
 const (
 	StatusPending   = "PENDING"
 	StatusCompleted = "COMPLETED"
 	StatusFailed    = "FAILED"
 )
 
-// handleSessionUpdate handles session update notifications from the agent.
+// ============================================================================
+// Session Update Processing
+// ============================================================================
+
+// handleSessionUpdate processes session updates from agent.
 func handleSessionUpdate(_ context.Context, params *api.SessionNotification) error {
 	update, ok := params.Update.(*api.SessionUpdate)
 	if !ok {
-		fmt.Printf("[UPDATE] Received untyped session update: %+v\n", params.Update)
+		fmt.Printf("[UPDATE] Untyped session update: %+v\n", params.Update)
 		return nil
 	}
 
@@ -25,7 +33,7 @@ func handleSessionUpdate(_ context.Context, params *api.SessionNotification) err
 	return nil
 }
 
-// handleTypedSessionUpdate processes session updates with formatted output.
+// handleTypedSessionUpdate formats and displays session updates.
 func handleTypedSessionUpdate(update *api.SessionUpdate) {
 	switch update.Type {
 	case api.SessionUpdateTypeAgentMessageChunk:
@@ -41,11 +49,11 @@ func handleTypedSessionUpdate(update *api.SessionUpdate) {
 	case api.SessionUpdateTypeUserMessageChunk:
 		handleUserMessageChunk(update.GetUserMessageChunk())
 	default:
-		fmt.Printf("[UPDATE] Unknown session update type: %s\n", update.Type)
+		fmt.Printf("[UPDATE] Unknown update type: %s\n", update.Type)
 	}
 }
 
-// handleAgentMessageChunk processes agent message chunks for display.
+// handleAgentMessageChunk displays agent message chunks.
 func handleAgentMessageChunk(chunk *api.SessionUpdateAgentMessageChunk) {
 	if chunk == nil {
 		return
@@ -53,7 +61,7 @@ func handleAgentMessageChunk(chunk *api.SessionUpdateAgentMessageChunk) {
 	printContentBlock(*chunk.Content)
 }
 
-// printContentBlock prints different types of content blocks.
+// printContentBlock displays content blocks by type.
 func printContentBlock(content api.ContentBlock) {
 	if textContent := content.GetText(); textContent != nil {
 		fmt.Print(textContent.Text)
@@ -78,19 +86,19 @@ func printContentBlock(content api.ContentBlock) {
 	fmt.Print("[Unknown content]")
 }
 
-// handleAgentThoughtChunk processes agent thought chunks.
+// handleAgentThoughtChunk processes agent thoughts.
 func handleAgentThoughtChunk(chunk *api.SessionUpdateAgentThoughtChunk) {
 	if chunk == nil {
 		return
 	}
 
-	// Log thoughts (not typically shown to users)
+	// Log internal agent reasoning
 	if textContent := chunk.Content.GetText(); textContent != nil {
 		fmt.Printf("[THOUGHT] %s\n", textContent.Text)
 	}
 }
 
-// handlePlanUpdate processes plan updates from the agent.
+// handlePlanUpdate displays agent plans.
 func handlePlanUpdate(plan *api.SessionUpdatePlan) {
 	if plan == nil {
 		return
@@ -104,7 +112,7 @@ func handlePlanUpdate(plan *api.SessionUpdatePlan) {
 	fmt.Println()
 }
 
-// parsePlanEntry extracts status and title from a plan entry interface.
+// parsePlanEntry extracts plan entry details.
 func parsePlanEntry(entryInterface interface{}) (string, string) {
 	status := StatusPending
 	title := "Unknown task"
@@ -135,7 +143,7 @@ func parsePlanEntry(entryInterface interface{}) (string, string) {
 	return status, title
 }
 
-// mapStatusString converts status string values to display constants.
+// mapStatusString converts status values to display format.
 func mapStatusString(statusVal string) string {
 	switch statusVal {
 	case "completed":
@@ -147,7 +155,7 @@ func mapStatusString(statusVal string) string {
 	}
 }
 
-// handleToolCallUpdate processes tool call notifications.
+// handleToolCallUpdate displays tool call status.
 func handleToolCallUpdate(toolCall *api.SessionUpdateToolCall) {
 	if toolCall == nil {
 		return
@@ -198,7 +206,7 @@ func handleToolCallUpdate(toolCall *api.SessionUpdateToolCall) {
 	fmt.Println()
 }
 
-// handleToolCallUpdateNotification processes tool call update notifications.
+// handleToolCallUpdateNotification displays tool call updates.
 func handleToolCallUpdateNotification(toolCallUpdate *api.SessionUpdateToolCallUpdate) {
 	if toolCallUpdate == nil {
 		return
@@ -209,7 +217,7 @@ func handleToolCallUpdateNotification(toolCallUpdate *api.SessionUpdateToolCallU
 	printToolCallUpdateContent(toolCallUpdate.Content)
 }
 
-// extractToolCallUpdateStatus extracts and maps the tool call update status.
+// extractToolCallUpdateStatus gets tool call status.
 func extractToolCallUpdateStatus(statusInterface interface{}) string {
 	if statusInterface == nil {
 		return "UPDATING"
@@ -223,7 +231,7 @@ func extractToolCallUpdateStatus(statusInterface interface{}) string {
 	return mapStatusString(statusStr)
 }
 
-// printToolCallUpdateContent prints the content from a tool call update.
+// printToolCallUpdateContent displays tool call results.
 func printToolCallUpdateContent(contentInterface interface{}) {
 	if contentInterface == nil {
 		return
@@ -240,7 +248,7 @@ func printToolCallUpdateContent(contentInterface interface{}) {
 	}
 }
 
-// printToolCallContentItem prints a single content item from a tool call.
+// printToolCallContentItem displays a content item.
 func printToolCallContentItem(contentItem interface{}) {
 	contentMap, mapOk := contentItem.(map[string]interface{})
 	if !mapOk {
@@ -260,14 +268,13 @@ func printToolCallContentItem(contentItem interface{}) {
 	}
 }
 
-// handleUserMessageChunk processes user message chunks (echoed back from agent).
+// handleUserMessageChunk processes echoed user messages.
 func handleUserMessageChunk(chunk *api.SessionUpdateUserMessageChunk) {
 	if chunk == nil {
 		return
 	}
 
-	// Usually we don't need to show user message chunks since we already know what we sent
-	// But we can log them for debugging
+	// Log echoed messages for debugging
 	if textContent := chunk.Content.GetText(); textContent != nil {
 		fmt.Printf("[USER ECHO] %s\n", textContent.Text)
 	}

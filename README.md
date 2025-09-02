@@ -1,10 +1,10 @@
 # Agent Client Protocol - Go Implementation
 
-A Go library for implementing the Agent Client Protocol (ACP), providing type-safe client and agent connections with automatic code generation from the official JSON schema.
+A Go library for implementing the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/), providing type-safe connections with automatic code generation from the official JSON schema.
 
 ## Overview
 
-The Agent Client Protocol enables communication between AI agents and clients through a standardized JSON-RPC 2.0 interface. This Go implementation provides:
+The [Agent Client Protocol](https://agentclientprotocol.com/) enables communication between AI agents and clients through a standardized JSON-RPC 2.0 interface. This Go implementation provides:
 
 - **Type-safe API**: Generated Go types from the official ACP JSON schema
 - **Connection management**: Both agent and client connection types with stdio transport
@@ -56,7 +56,7 @@ func main() {
     
     // Create stdio connection
     stdio := &stdioReadWriteCloser{Reader: os.Stdin, Writer: os.Stdout}
-    conn, err := acp.NewAgentConnectionStdio(ctx, stdio, registry.Handler(), 30*time.Second)
+    conn, err := acp.NewAgentConnectionStdio(ctx, stdio, registry, 30*time.Second)
     if err != nil {
         log.Fatal(err)
     }
@@ -110,7 +110,7 @@ func main() {
     
     // Create stdio connection
     stdio := &stdioReadWriteCloser{Reader: os.Stdin, Writer: os.Stdout}
-    conn, err := acp.NewClientConnectionStdio(ctx, stdio, registry.Handler(), 30*time.Second)
+    conn, err := acp.NewClientConnectionStdio(ctx, stdio, registry, 30*time.Second)
     if err != nil {
         log.Fatal(err)
     }
@@ -182,7 +182,8 @@ This implementation supports Agent Client Protocol version 1 with the following 
 - `fs/read_text_file`: Read text file contents (requires `fs.readTextFile` capability)
 - `fs/write_text_file`: Write text file contents (requires `fs.writeTextFile` capability)
 - `terminal/create`: Create terminal session
-- `terminal/output`: Send terminal output  
+- `terminal/output`: Send terminal output
+- `terminal/kill`: Terminate terminal process
 - `terminal/release`: Release terminal session
 - `terminal/wait_for_exit`: Wait for terminal exit
 
@@ -192,8 +193,8 @@ This implementation supports Agent Client Protocol version 1 with the following 
 ## Examples
 
 See the `examples/` directory for complete working examples:
-- `examples/agent/`: Example agent implementation with session management, tool calls, and permission handling
-- `examples/client/`: Example client implementation with subprocess management and interactive communication
+- `examples/agent/`: Agent implementation with session management and file operations
+- `examples/client/`: Client implementation with subprocess management and interactive interface
 
 ### Running the Examples
 

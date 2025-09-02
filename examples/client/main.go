@@ -16,12 +16,20 @@ import (
 	"github.com/joshgarnett/agent-client-protocol-go/acp/api"
 )
 
+// ============================================================================
+// Configuration Constants
+// ============================================================================
+
 const (
 	minRequiredArgs = 2
 	defaultTimeout  = 30 * time.Second
 )
 
-// stdioReadWriteCloser combines stdin and stdout into a ReadWriteCloser.
+// ============================================================================
+// Types and Global State
+// ============================================================================
+
+// stdioReadWriteCloser wraps stdio as ReadWriteCloser.
 type stdioReadWriteCloser struct {
 	io.Reader
 	io.Writer
@@ -31,7 +39,7 @@ func (s stdioReadWriteCloser) Close() error {
 	return nil
 }
 
-// Global input manager for handling all user input
+// Global input manager
 var inputManager *InputManager
 
 // Test file paths (set by createTestFiles)
@@ -41,7 +49,11 @@ var (
 	testOutputFile  string
 )
 
-// setupAgent creates and starts the agent subprocess.
+// ============================================================================
+// Agent Process Management
+// ============================================================================
+
+// setupAgent starts the agent subprocess.
 func setupAgent(ctx context.Context, agentCmd string, agentArgs []string) (stdioReadWriteCloser, *exec.Cmd, error) {
 	fmt.Printf("[CLIENT] Starting agent: %s %v\n", agentCmd, agentArgs)
 
@@ -69,7 +81,7 @@ func setupAgent(ctx context.Context, agentCmd string, agentArgs []string) (stdio
 	return stdio, agentProcess, nil
 }
 
-// initializeConnection performs ACP initialization and session creation.
+// initializeConnection sets up ACP connection and creates session.
 func initializeConnection(ctx context.Context, conn *acp.ClientConnection) (api.SessionId, error) {
 	fmt.Println("[CLIENT] Establishing connection with agent...")
 
@@ -104,7 +116,11 @@ func initializeConnection(ctx context.Context, conn *acp.ClientConnection) (api.
 	return sessionResponse.SessionId, nil
 }
 
-// createTestFiles creates test files for the agent to read and demonstrate file operations.
+// ============================================================================
+// Test File Management
+// ============================================================================
+
+// createTestFiles creates test files for agent demonstrations.
 func createTestFiles() error {
 	fmt.Println("[CLIENT] Creating test files for agent demonstrations...")
 
@@ -198,7 +214,7 @@ The agent will demonstrate:
 	return nil
 }
 
-// cleanupTestFiles removes test files and shows what the agent created.
+// cleanupTestFiles shows agent output and removes test files.
 func cleanupTestFiles() {
 	fmt.Println("\n[CLIENT] Checking agent output and cleaning up test files...")
 
@@ -228,7 +244,11 @@ func cleanupTestFiles() {
 	}
 }
 
-// runClient performs the main client logic and returns any error.
+// ============================================================================
+// Main Client Application
+// ============================================================================
+
+// runClient executes the main client logic.
 func runClient() error {
 	if len(os.Args) < minRequiredArgs {
 		fmt.Printf("Usage: %s <agent_executable> [agent_args...]\n", os.Args[0])
@@ -351,19 +371,22 @@ func runClient() error {
 	return nil
 }
 
-// Example client demonstrates ACP client implementation with subprocess spawning,
-// interactive permission handling, session updates, and file operations.
+// Example client demonstrates ACP client implementation.
 func main() {
 	if err := runClient(); err != nil {
 		log.Fatalf("Client error: %v", err)
 	}
 }
 
-// handleFsReadTextFile handles file read requests from the agent.
+// ============================================================================
+// ACP Protocol Handlers
+// ============================================================================
+
+// handleFsReadTextFile processes agent file read requests.
 func handleFsReadTextFile(_ context.Context, params *api.ReadTextFileRequest) (*api.ReadTextFileResponse, error) {
 	fmt.Printf("[FILE] Agent requested to read file: %s\n", params.Path)
 
-	// Handle relative paths
+	// Convert relative paths
 	path := params.Path
 	if !filepath.IsAbs(path) {
 		if cwd, err := os.Getwd(); err == nil {
@@ -383,11 +406,11 @@ func handleFsReadTextFile(_ context.Context, params *api.ReadTextFileRequest) (*
 	}, nil
 }
 
-// handleFsWriteTextFile handles file write requests from the agent.
+// handleFsWriteTextFile processes agent file write requests.
 func handleFsWriteTextFile(_ context.Context, params *api.WriteTextFileRequest) error {
 	fmt.Printf("[FILE] Agent requested to write file: %s (%d bytes)\n", params.Path, len(params.Content))
 
-	// Handle relative paths
+	// Convert relative paths
 	path := params.Path
 	if !filepath.IsAbs(path) {
 		if cwd, err := os.Getwd(); err == nil {
@@ -395,7 +418,7 @@ func handleFsWriteTextFile(_ context.Context, params *api.WriteTextFileRequest) 
 		}
 	}
 
-	// Create parent directories
+	// Ensure parent directories exist
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		fmt.Printf("[FILE] Error creating directory for %s: %v\n", params.Path, err)
 		return fmt.Errorf("failed to create directory: %w", err)
@@ -410,15 +433,13 @@ func handleFsWriteTextFile(_ context.Context, params *api.WriteTextFileRequest) 
 	return nil
 }
 
-// handleSessionRequestPermission handles permission requests from the agent.
+// handleSessionRequestPermission processes permission requests from the agent.
 func handleSessionRequestPermission(
 	_ context.Context,
 	params *api.RequestPermissionRequest,
 ) (*api.RequestPermissionResponse, error) {
-	log.Printf("[CLIENT_DEBUG] handleSessionRequestPermission called")
 	fmt.Printf("\n[PERMISSION] Agent requested permission for: %v\n", params.ToolCall.Title)
 
-	// ToolCall.Kind is an interface{}, need to handle it carefully
 	if kindVal := params.ToolCall.Kind; kindVal != nil {
 		if kindStr, ok := kindVal.(string); ok {
 			fmt.Printf("    Tool kind: %s\n", kindStr)
@@ -434,30 +455,45 @@ func handleSessionRequestPermission(
 		}
 	}
 
-	fmt.Printf("    Raw input: %+v\n", params.ToolCall.RawInput)
-	fmt.Println()
-
-	// For now, automatically allow the first option to avoid deadlock
-	// This demonstrates the protocol working - real implementation would get user input
-	if len(params.Options) > 0 {
-		selectedOption := params.Options[0]
-		fmt.Printf("Auto-allowing: %s\n\n", selectedOption.Name)
-
-		response := &api.RequestPermissionResponse{
-			Outcome: map[string]interface{}{
-				"outcome":  "selected",
-				"optionId": selectedOption.OptionId,
-			},
-		}
-		log.Printf("[CLIENT_DEBUG] Returning permission response: %+v", response)
-		return response, nil
+	if len(params.Options) == 0 {
+		fmt.Println("No options available, cancelling")
+		return &api.RequestPermissionResponse{
+			Outcome: map[string]interface{}{"outcome": "cancelled"},
+		}, nil
 	}
 
-	// No options available
-	fmt.Println("No options available, cancelling")
+	// Present options to user
+	var optionNames []string
+	for _, option := range params.Options {
+		optionNames = append(optionNames, option.Name)
+	}
+
+	choice, err := inputManager.RequestInputWithOptions("", optionNames)
+	if err != nil {
+		fmt.Printf("Input error: %v\n", err)
+		return &api.RequestPermissionResponse{
+			Outcome: map[string]interface{}{"outcome": "cancelled"},
+		}, nil
+	}
+
+	// Parse choice and get selected option
+	choiceIdx := 0
+	_, parseErr := fmt.Sscanf(choice, "%d", &choiceIdx)
+	if parseErr != nil || choiceIdx < 1 || choiceIdx > len(params.Options) {
+		fmt.Println("Invalid choice, cancelling")
+		//nolint:nilerr // Intentionally return nil error with cancelled outcome
+		return &api.RequestPermissionResponse{
+			Outcome: map[string]interface{}{"outcome": "cancelled"},
+		}, nil
+	}
+
+	selectedOption := params.Options[choiceIdx-1]
+	fmt.Printf("Selected: %s\n\n", selectedOption.Name)
+
 	return &api.RequestPermissionResponse{
 		Outcome: map[string]interface{}{
-			"outcome": "cancelled",
+			"outcome":  "selected",
+			"optionId": selectedOption.OptionId,
 		},
 	}, nil
 }
