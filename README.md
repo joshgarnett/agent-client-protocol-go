@@ -27,12 +27,23 @@ package main
 
 import (
     "context"
+    "io"
     "log"
     "os"
+    "time"
     
     "github.com/joshgarnett/agent-client-protocol-go/acp"
     "github.com/joshgarnett/agent-client-protocol-go/acp/api"
 )
+
+type stdioReadWriteCloser struct {
+    io.Reader
+    io.Writer
+}
+
+func (s *stdioReadWriteCloser) Close() error {
+    return nil
+}
 
 func main() {
     ctx := context.Background()
@@ -45,7 +56,10 @@ func main() {
     
     // Create stdio connection
     stdio := &stdioReadWriteCloser{Reader: os.Stdin, Writer: os.Stdout}
-    conn := acp.NewAgentConnectionStdio(ctx, stdio, registry.Handler())
+    conn, err := acp.NewAgentConnectionStdio(ctx, stdio, registry.Handler(), 30*time.Second)
+    if err != nil {
+        log.Fatal(err)
+    }
     
     log.Println("Agent started")
     conn.Wait()
@@ -68,12 +82,23 @@ package main
 
 import (
     "context"
+    "io"
     "log"
     "os"
+    "time"
     
     "github.com/joshgarnett/agent-client-protocol-go/acp"
     "github.com/joshgarnett/agent-client-protocol-go/acp/api"
 )
+
+type stdioReadWriteCloser struct {
+    io.Reader
+    io.Writer
+}
+
+func (s *stdioReadWriteCloser) Close() error {
+    return nil
+}
 
 func main() {
     ctx := context.Background()
@@ -85,7 +110,10 @@ func main() {
     
     // Create stdio connection
     stdio := &stdioReadWriteCloser{Reader: os.Stdin, Writer: os.Stdout}
-    conn := acp.NewClientConnectionStdio(ctx, stdio, registry.Handler())
+    conn, err := acp.NewClientConnectionStdio(ctx, stdio, registry.Handler(), 30*time.Second)
+    if err != nil {
+        log.Fatal(err)
+    }
     
     log.Println("Client started")
     conn.Wait()

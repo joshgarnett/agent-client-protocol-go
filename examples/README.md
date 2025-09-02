@@ -269,12 +269,18 @@ sequenceDiagram
 // Agent side
 registry := acp.NewHandlerRegistry()
 registry.RegisterSessionPromptHandler(handlePrompt)
-conn := acp.NewAgentConnectionStdio(ctx, stdio, registry.Handler())
+conn, err := acp.NewAgentConnectionStdio(ctx, stdio, registry.Handler(), 30*time.Second)
+if err != nil {
+    log.Fatal(err)
+}
 
 // Client side  
 registry := acp.NewHandlerRegistry()
 registry.RegisterSessionUpdateHandler(handleUpdates)
-conn := acp.NewClientConnectionStdio(ctx, stdio, registry.Handler())
+conn, err := acp.NewClientConnectionStdio(ctx, stdio, registry.Handler(), 30*time.Second)
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Sending Session Updates

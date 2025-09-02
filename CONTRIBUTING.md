@@ -96,9 +96,11 @@ agent-client-protocol-go/
 │   ├── api/             # Generated API types and constants
 │   │   ├── types_generated.go      # Generated types
 │   │   └── constants_generated.go  # Generated constants
-│   ├── agent.go         # Agent connection implementation
-│   ├── client.go        # Client connection implementation
+│   ├── connection_core.go   # Shared connection core with call queueing
+│   ├── agent.go         # Agent connection wrapper
+│   ├── client.go        # Client connection wrapper
 │   ├── handlers.go      # Handler registration system
+│   ├── transport.go     # Transport implementations
 │   └── errors.go        # Error types and constants
 ├── examples/            # Usage examples
 │   ├── README.md        # Detailed examples documentation
@@ -137,6 +139,14 @@ The library provides type-safe APIs wherever possible:
 ### Handler Registry Pattern
 
 The `HandlerRegistry` provides a clean way to register type-safe handlers for incoming requests and notifications.
+
+### Connection Architecture
+
+The library uses a layered connection architecture:
+
+- **ConnectionCore**: Handles low-level JSON-RPC communication, call queueing to prevent writer contention, and connection lifecycle management
+- **AgentConnection/ClientConnection**: Type-safe wrappers that provide method-specific helpers for their respective roles
+- **Call Queueing**: Sequential processing of outbound calls to prevent race conditions during re-entrant handler calls
 
 ## Adding New Features
 
